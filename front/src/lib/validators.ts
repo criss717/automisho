@@ -2,7 +2,7 @@ import { z } from "zod";
 
 export const ChatBody = z.object({
   messages: z.array(z.any()).min(1),
-  conversationId: z.string().uuid().optional(),
+  conversationId: z.string().min(1).optional(),
 });
 
 export const CheckoutBody = z.object({

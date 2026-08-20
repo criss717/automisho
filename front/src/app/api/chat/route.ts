@@ -7,7 +7,7 @@ import {
 } from "ai";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
-import { opencode, CHAT_MODEL, AUTOMISHO_SYSTEM_PROMPT } from "@/lib/ai";
+import { CHAT_MODEL, AUTOMISHO_SYSTEM_PROMPT, getChatModel } from "@/lib/ai";
 import { ChatBody } from "@/lib/validators";
 import { checkRateLimit, rateLimitResponse } from "@/lib/rate-limit";
 
@@ -300,7 +300,7 @@ export async function POST(req: Request) {
       : AUTOMISHO_SYSTEM_PROMPT;
 
     const result = streamText({
-      model: opencode(CHAT_MODEL),
+      model: getChatModel(CHAT_MODEL),
       system: systemPrompt,
       messages: await convertToModelMessages(messages),
       onFinish: async ({ text }) => {
