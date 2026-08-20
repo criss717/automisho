@@ -1,23 +1,20 @@
 from fastapi import APIRouter, HTTPException
 from models.schemas import VinRequest, VehicleHistory
-import httpx
 import os
 
 router = APIRouter(prefix="/carfax", tags=["carfax"])
 
 CARFAX_API_KEY = os.getenv("CARFAX_API_KEY", "")
 
-
 @router.post("", response_model=VehicleHistory)
 async def carfax_lookup(req: VinRequest):
     """
     Get vehicle history from CarFax by VIN.
-    
-    Requires CARFAX_API_KEY env var.
-    CarFax doesn't have a public API for Spain — this is a placeholder.
+    Requires CARFAX_API_KEY env var, otherwise mock.
+    CarFax doesn't have a public API for Spain — placeholder.
     """
-    if not CARFAX_API_KEY:
-        # Return mock data for development
+    is_mock = not CARFAX_API_KEY
+    if is_mock:
         return VehicleHistory(
             vin=req.vin,
             make="SEAT",
@@ -32,13 +29,6 @@ async def carfax_lookup(req: VinRequest):
             owners=1,
             source="mock",
         )
-
-    # CarFax API integration (when available)
-    # CarFax primarily serves North American markets
-    # For Spain, consider alternatives like:
-    # - AutoDNA (https://www.autodna.com)
-    # - carVertical (already integrated above)
-    # - Informevehicular.com
 
     raise HTTPException(
         status_code=501,

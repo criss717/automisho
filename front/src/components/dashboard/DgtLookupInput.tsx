@@ -82,6 +82,16 @@ export default function DgtLookupInput() {
 
       {result && (
         <div className="space-y-2 text-sm">
+          <div className="flex items-center gap-2 mb-3">
+            {result.source === "mock" ? (
+              <span className="tag text-[10px]">Demo — datos de ejemplo</span>
+            ) : (
+              <span className="tag bg-mint-glow text-forest-depths border-mint-glow text-[10px]">Oficial — DGT</span>
+            )}
+            {result.source === "mock" && (
+              <span className="text-[11px] text-mist-gray/50">Informe de demostración, para oficial usa DGTGuideCard</span>
+            )}
+          </div>
           <div className="flex justify-between">
             <span className="text-mist-gray/60">Matrícula</span>
             <span className="text-pure-light font-medium">{result.plate}</span>

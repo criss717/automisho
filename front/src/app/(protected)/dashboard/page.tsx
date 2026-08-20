@@ -6,6 +6,7 @@ import SettingsPanel from "@/components/dashboard/SettingsPanel";
 import DgtLookupInput from "@/components/dashboard/DgtLookupInput";
 import { DashboardBlobs, DashboardHeader, DashboardStaggerGrid } from "@/components/dashboard/DashboardGrid";
 import DashboardSuccessRefresh from "@/components/dashboard/DashboardSuccessRefresh";
+import DgtHistoryCards from "@/components/dashboard/DgtHistoryCards";
 import { Suspense } from "react";
 
 export default async function DashboardPage() {
@@ -55,6 +56,8 @@ export default async function DashboardPage() {
           <DgtLookupInput />
           <SettingsPanel user={session.user} />
         </DashboardStaggerGrid>
+
+        <DgtHistoryCards />
       </div>
     </div>
   );

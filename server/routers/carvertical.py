@@ -5,19 +5,20 @@ import os
 
 router = APIRouter(prefix="/carvertical", tags=["carvertical"])
 
-CARVERTIAL_API_KEY = os.getenv("CARVERTICAL_API_KEY", "")
-CARVERTIAL_API_URL = "https://api.carvertical.com/v2/vehicle-history"
+CARVERTICAL_API_KEY = os.getenv("CARVERTICAL_API_KEY", "")
+CARVERTICAL_API_URL = "https://api.carvertical.com/v2/vehicle-history"
 
+def _is_mock() -> bool:
+    return not CARVERTICAL_API_KEY or os.getenv("MOCK_DGT", "true").lower() == "true" and not os.getenv("CARVERTICAL_API_KEY")
 
 @router.post("", response_model=VehicleHistory)
 async def carvertical_lookup(req: VinRequest):
     """
     Get vehicle history from CarVertical by VIN.
-    
-    Requires CARVERTIAL_API_KEY env var.
+    Requires CARVERTICAL_API_KEY env var, otherwise mock.
     """
-    if not CARVERTIAL_API_KEY:
-        # Return mock data for development
+    is_mock = not CARVERTICAL_API_KEY
+    if is_mock:
         return VehicleHistory(
             vin=req.vin,
             make="Volkswagen",
@@ -34,12 +35,12 @@ async def carvertical_lookup(req: VinRequest):
             source="mock",
         )
 
-    async with httpx.AsyncClient(timeout=20) as client:
+    async with httpx.AsyncClient(timeout=12) as client:
         try:
             resp = await client.get(
-                CARVERTIAL_API_URL,
+                CARVERTICAL_API_URL,
                 params={"vin": req.vin},
-                headers={"Authorization": f"Basic {CARVERTIAL_API_KEY}"},
+                headers={"Authorization": f"Basic {CARVERTICAL_API_KEY}"},
             )
             resp.raise_for_status()
             data = resp.json()
