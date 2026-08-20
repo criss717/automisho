@@ -5,6 +5,8 @@ import UsageStats from "@/components/dashboard/UsageStats";
 import SettingsPanel from "@/components/dashboard/SettingsPanel";
 import DgtLookupInput from "@/components/dashboard/DgtLookupInput";
 import { DashboardBlobs, DashboardHeader, DashboardStaggerGrid } from "@/components/dashboard/DashboardGrid";
+import DashboardSuccessRefresh from "@/components/dashboard/DashboardSuccessRefresh";
+import { Suspense } from "react";
 
 export default async function DashboardPage() {
   const session = await auth();
@@ -33,6 +35,9 @@ export default async function DashboardPage() {
     <div className="relative h-full overflow-y-auto overflow-x-hidden">
       <DashboardBlobs />
       <div className="relative max-w-6xl mx-auto px-8 py-10">
+        <Suspense fallback={null}>
+          <DashboardSuccessRefresh />
+        </Suspense>
         <DashboardHeader>
           <h1 className="text-2xl text-pure-light font-light mb-8">
             Dashboard
