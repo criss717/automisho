@@ -121,10 +121,13 @@ export async function POST(req: Request) {
         break;
       }
 
-      case "customer.subscription.past_due": {
-        const subscription = event.data.object as Stripe.Subscription;
-        const customerId = subscription.customer as string;
-        console.warn("[webhook] Subscription past_due for customer:", customerId);
+      default: {
+        // Handle past_due or unknown via string check
+        if ((event.type as string) === "customer.subscription.past_due") {
+          const subscription = event.data.object as unknown as Stripe.Subscription;
+          const customerId = subscription.customer as string;
+          console.warn("[webhook] Subscription past_due for customer:", customerId);
+        }
         break;
       }
     }

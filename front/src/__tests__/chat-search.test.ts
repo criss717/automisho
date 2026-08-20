@@ -1,9 +1,22 @@
-import { detectCarSearch, detectPlate, detectVIN } from "@/app/api/chat/route";
-
-// Mock next-auth and prisma to allow importing route without DB
+jest.mock("ai", () => ({
+  streamText: jest.fn(),
+  convertToModelMessages: jest.fn(),
+  createUIMessageStream: jest.fn(),
+  createUIMessageStreamResponse: jest.fn(),
+  toUIMessageStream: jest.fn(),
+}));
+jest.mock("@ai-sdk/openai-compatible", () => ({ createOpenAICompatible: jest.fn(() => jest.fn()) }));
 jest.mock("@/lib/auth", () => ({ auth: jest.fn() }));
-jest.mock("@/lib/prisma", () => ({ prisma: { user: { findUnique: jest.fn() }, conversation: { findFirst: jest.fn() }, message: { create: jest.fn(), count: jest.fn() }, conversation: { update: jest.fn() } } }));
+jest.mock("@/lib/prisma", () => ({
+  prisma: {
+    user: { findUnique: jest.fn() },
+    conversation: { findFirst: jest.fn(), update: jest.fn(), count: jest.fn() },
+    message: { create: jest.fn(), count: jest.fn() },
+  },
+}));
 jest.mock("@/lib/ai", () => ({ opencode: jest.fn(), CHAT_MODEL: "qwen3.7-plus", AUTOMISHO_SYSTEM_PROMPT: "test" }));
+
+import { detectCarSearch, detectPlate, detectVIN } from "@/app/api/chat/route";
 
 describe("detectCarSearch", () => {
   const fixtures: Array<{ query: string; isSearch: boolean; maxPrice?: number; minPrice?: number }> = [

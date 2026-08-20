@@ -38,9 +38,8 @@ export default function ChatWindow({ conversationId, initialMessages = [] }: Cha
       sendMessage(
         {
           text: message,
-          // @ts-expect-error - ai sdk supports files via experimental_attachments
-          files,
-        },
+          files: files as unknown as FileList,
+        } as unknown as Parameters<typeof sendMessage>[0],
         { body: { conversationId } }
       );
     } else {

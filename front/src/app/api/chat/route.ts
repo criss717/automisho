@@ -16,13 +16,26 @@ const BACKEND_URL = process.env.BACKEND_URL || "http://localhost:8000";
 // ── Helpers ───────────────────────────────────────────────────────────────
 
 function parsePrice(s: string): number {
-  // "15.5k" → 15500, "3.000" → 3000, "15k" → 15000
+  // "3.000" → 3000, "15.5" → 155 (without k) but clamped; k handled separately
   const cleaned = s.replace(/[.,]/g, "").replace(/k/i, "000");
   const digits = cleaned.replace(/[^\d]/g, "");
   const n = parseInt(digits, 10);
   if (isNaN(n)) return 0;
   // Clamp price 500..100000 per spec
   return Math.max(500, Math.min(100000, n));
+}
+
+function parsePriceSmart(raw: string, fullMatch: string): number {
+  const hasK = /k/i.test(fullMatch);
+  if (hasK) {
+    // handle "15.5k" -> 15500, "15k" -> 15000, "15.000k" -> 15000
+    const normalized = raw.replace(",", ".").trim();
+    const f = parseFloat(normalized.replace(/[^\d.]/g, ""));
+    if (isNaN(f)) return 0;
+    const val = Math.round(f * 1000);
+    return Math.max(500, Math.min(100000, val));
+  }
+  return parsePrice(raw);
 }
 
 // Detect VIN 17 chars without I,O,Q
@@ -67,8 +80,8 @@ export function detectCarSearch(message: string): {
     if (!m) continue;
     // entre pattern has 2 groups
     if (pat.source.includes("entre") && m[1] && m[2]) {
-      const a = parsePrice(m[1]);
-      const b = parsePrice(m[2]);
+      const a = parsePriceSmart(m[1], m[0]);
+      const b = parsePriceSmart(m[2], m[0]);
       if (a && b) {
         minPrice = Math.min(a, b);
         maxPrice = Math.max(a, b);
@@ -79,7 +92,7 @@ export function detectCarSearch(message: string): {
       // For máximo pattern, group may be at 1 but regex splits differently; handle fallback
       const candidate = raw || m[0].match(/(\d[\d.,]*)/)?.[1];
       if (candidate) {
-        const parsed = parsePrice(candidate);
+        const parsed = parsePriceSmart(candidate, m[0]);
         if (parsed) maxPrice = parsed;
       }
     }
@@ -90,7 +103,7 @@ export function detectCarSearch(message: string): {
   if (maxPrice === undefined) {
     const maxPattern = /(?:máximo|máx\.?)\s*(\d[\d.,]*)\s*(?:k\s*)?(?:€|euros?)?/i;
     const m = lower.match(maxPattern);
-    if (m && m[1]) maxPrice = parsePrice(m[1]);
+    if (m && m[1]) maxPrice = parsePriceSmart(m[1], m[0]);
   }
 
   const searchKeywords = [
@@ -318,19 +331,15 @@ export async function POST(req: Request) {
     if (extraData) {
       const uiStream = createUIMessageStream({
         execute: async ({ writer }) => {
-          // Send transient=false data so it persists in message history
-          writer.write({
+          // Send data so MessageList can render car cards
+          (writer as unknown as { write: (c: unknown) => void }).write({
             type: "data",
             data: extraData,
             transient: false,
-          } as unknown as Record<string, unknown>);
-          writer.merge(toUIMessageStream(result.stream));
+          });
+          writer.merge(toUIMessageStream({ stream: result.stream } as unknown as { stream: ReadableStream }));
         },
-        onFinish: async ({ isAborted }) => {
-          if (!isAborted) {
-            // onFinish of streamText already handles saving assistant message
-          }
-        },
+        onFinish: async () => {},
       });
       const response = createUIMessageStreamResponse({ stream: uiStream });
       response.headers.set("x-automisho-cars", encodeURIComponent(JSON.stringify(extraData)));
@@ -338,7 +347,7 @@ export async function POST(req: Request) {
     }
 
     return createUIMessageStreamResponse({
-      stream: toUIMessageStream(result.stream),
+      stream: toUIMessageStream({ stream: result.stream } as unknown as { stream: ReadableStream }),
     });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);

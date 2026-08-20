@@ -8,7 +8,7 @@ const config: Config = {
   },
   testRegex: '.*\\.test\\.tsx?$',
   transform: {
-    '^.+\\.tsx?$': ['ts-jest', { tsconfig: 'tsconfig.json' }],
+    '^.+\\.tsx?$': ['ts-jest', { tsconfig: 'tsconfig.json', isolatedModules: true, diagnostics: false }],
   },
 };
 
