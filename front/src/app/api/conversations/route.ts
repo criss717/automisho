@@ -1,6 +1,8 @@
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { NextResponse } from "next/server";
+import { ConversationBody } from "@/lib/validators";
+import { checkRateLimit, rateLimitResponse } from "@/lib/rate-limit";
 
 const PLAN_LIMITS: Record<string, number> = {
   free: 5,
@@ -36,6 +38,10 @@ export async function POST(req: Request) {
     return new Response("Unauthorized", { status: 401 });
   }
 
+  if (!checkRateLimit(req, (session.user as unknown as { plan?: string }).plan)) {
+    return rateLimitResponse();
+  }
+
   const plan = session.user.plan || "free";
   const limit = PLAN_LIMITS[plan];
 
@@ -56,7 +62,11 @@ export async function POST(req: Request) {
   }
 
   const body = await req.json().catch(() => ({}));
-  const title = body.title || "Nueva conversación";
+  const parsed = ConversationBody.safeParse(body);
+  if (!parsed.success) {
+    return NextResponse.json({ error: parsed.error.flatten().fieldErrors }, { status: 400 });
+  }
+  const title = parsed.data.title || "Nueva conversación";
 
   const conversation = await prisma.conversation.create({
     data: {

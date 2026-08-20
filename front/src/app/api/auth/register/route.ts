@@ -1,24 +1,22 @@
 import { NextResponse } from "next/server";
 import bcrypt from "bcryptjs";
 import { prisma } from "@/lib/prisma";
+import { RegisterBody } from "@/lib/validators";
+import { checkRateLimit, rateLimitResponse } from "@/lib/rate-limit";
 
 export async function POST(req: Request) {
+  if (!checkRateLimit(req)) {
+    return rateLimitResponse();
+  }
   try {
-    const { name, email, password } = await req.json();
-
-    if (!email || !password) {
-      return NextResponse.json(
-        { error: "Email y contraseña son obligatorios" },
-        { status: 400 }
-      );
+    const body = await req.json();
+    const parsed = RegisterBody.safeParse(body);
+    if (!parsed.success) {
+      return NextResponse.json({ error: parsed.error.flatten().fieldErrors }, { status: 400 });
     }
+    const { name, email, password } = parsed.data;
 
-    if (password.length < 8) {
-      return NextResponse.json(
-        { error: "La contraseña debe tener al menos 8 caracteres" },
-        { status: 400 }
-      );
-    }
+
 
     const existingUser = await prisma.user.findUnique({
       where: { email },

@@ -1,5 +1,7 @@
 import { auth } from "@/lib/auth";
-import { getStripe, STRIPE_PLANS, type PlanKey } from "@/lib/stripe";
+import { getStripe, STRIPE_PLANS } from "@/lib/stripe";
+import { CheckoutBody } from "@/lib/validators";
+import { checkRateLimit, rateLimitResponse } from "@/lib/rate-limit";
 import { NextResponse } from "next/server";
 
 export async function POST(req: Request) {
@@ -9,11 +11,16 @@ export async function POST(req: Request) {
     return new Response("Unauthorized", { status: 401 });
   }
 
-  const { plan } = (await req.json()) as { plan: PlanKey };
-
-  if (!plan || !(plan in STRIPE_PLANS)) {
-    return new Response("Invalid plan", { status: 400 });
+  if (!checkRateLimit(req, (session.user as unknown as { plan?: string }).plan)) {
+    return rateLimitResponse();
   }
+
+  const body = await req.json();
+  const parsed = CheckoutBody.safeParse(body);
+  if (!parsed.success) {
+    return NextResponse.json({ error: parsed.error.flatten().fieldErrors }, { status: 400 });
+  }
+  const { plan } = parsed.data;
 
   const origin = req.headers.get("origin") || process.env.NEXTAUTH_URL!;
 

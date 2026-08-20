@@ -1,9 +1,11 @@
 import { auth } from "@/lib/auth";
 import { NextResponse } from "next/server";
+import { PlateBody } from "@/lib/validators";
+import { checkRateLimit, rateLimitResponse } from "@/lib/rate-limit";
 
 const BACKEND_URL = process.env.BACKEND_URL || "http://localhost:8000";
 
-// Spanish plate format: 0000-LLL
+// Spanish plate format: 0000-LLL without A,E,I,O,U,Q,Ñ
 const PLATE_REGEX = /^\d{4}[ -]?[BCDFGHJKLMNPRSTVWXYZ]{3}$/i;
 
 export async function POST(req: Request) {
@@ -12,8 +14,18 @@ export async function POST(req: Request) {
     return new Response("Unauthorized", { status: 401 });
   }
 
+  if (!checkRateLimit(req, (session.user as unknown as { plan?: string }).plan)) {
+    return rateLimitResponse();
+  }
+
   try {
-    const { plate } = await req.json();
+    const body = await req.json();
+    // Validate via zod but also keep legacy PLATE_REGEX check for backward compat
+    const zodParsed = PlateBody.safeParse(body);
+    if (!zodParsed.success) {
+      return NextResponse.json({ error: zodParsed.error.flatten().fieldErrors, message: "Formato de matrícula no válido. Usa 0000-LLL." }, { status: 400 });
+    }
+    const { plate } = zodParsed.data;
 
     if (!plate || typeof plate !== "string") {
       return NextResponse.json(

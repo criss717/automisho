@@ -16,14 +16,22 @@ app = FastAPI(
     version="0.1.0",
 )
 
-# CORS — allow Next.js frontend
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=[
+# CORS — allow only explicit origins (no wildcard with credentials)
+import os
+_allowed = os.getenv("ALLOWED_ORIGINS")
+if _allowed:
+    _origins = [o.strip() for o in _allowed.split(",") if o.strip()]
+else:
+    _origins = [
         "http://localhost:3000",
         "http://127.0.0.1:3000",
         "http://localhost:3001",
-    ],
+        # Add Vercel prod domain via ALLOWED_ORIGINS env in production
+    ]
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
