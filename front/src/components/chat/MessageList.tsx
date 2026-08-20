@@ -1,10 +1,15 @@
 "use client";
 
 import { useRef, useEffect } from "react";
-import { AnimatePresence } from "framer-motion";
+import { AnimatePresence, motion } from "framer-motion";
 import MessageBubble from "./MessageBubble";
 import NutSpinner from "../icons/NutSpinner";
+import CarResultCard from "./CarResultCard";
+import DGTGuideCard from "../dgt/DGTGuideCard";
+import CarVerticalCard from "../dgt/CarVerticalCard";
+import CarfaxCard from "../dgt/CarfaxCard";
 import type { UIMessage } from "ai";
+import type { CarResult } from "@/types";
 
 interface MessageListProps {
   messages: UIMessage[];
@@ -58,11 +63,62 @@ export default function MessageList({ messages, isLoading }: MessageListProps) {
 
         <AnimatePresence>
           {messages.map((msg) => (
-            <MessageBubble
-              key={msg.id}
-              role={msg.role as "user" | "assistant"}
-              content={getMessageText(msg)}
-            />
+            <div key={msg.id} className="space-y-3">
+              {/* Render text bubble if any text */}
+              {getMessageText(msg) && (
+                <MessageBubble role={msg.role as "user" | "assistant"} content={getMessageText(msg)} />
+              )}
+
+              {/* Render data/tool parts for assistant messages */}
+              {msg.parts.map((part: unknown, idx: number) => {
+                const p = part as Record<string, unknown>;
+                // data block with cars
+                if (p.type === "data" && (p.data as Record<string, unknown>)?.cars) {
+                  const cars = (p.data as { cars: CarResult[] }).cars;
+                  return (
+                    <motion.div
+                      key={`${msg.id}-cars-${idx}`}
+                      initial={{ opacity: 0, y: 8 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      className="grid gap-3"
+                    >
+                      {cars.map((c) => (
+                        <CarResultCard key={c.url || c.title} car={c} />
+                      ))}
+                    </motion.div>
+                  );
+                }
+                // dgt-guide or dgtOptions
+                if (
+                  p.type === "dgt-guide" ||
+                  (p.type === "data" && (p.data as Record<string, unknown>)?.dgtOptions)
+                ) {
+                  const opts = (p.type === "dgt-guide"
+                    ? { plate: (p as Record<string, unknown>).plate as string, vin: (p as Record<string, unknown>).vin as string }
+                    : (p.data as { dgtOptions: { plate: string | null; vin: string | null } }).dgtOptions) || { plate: null, vin: null };
+                  return (
+                    <motion.div
+                      key={`${msg.id}-dgt-${idx}`}
+                      initial={{ opacity: 0, y: 8 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      className="grid gap-3 md:grid-cols-1"
+                    >
+                      <DGTGuideCard plate={opts.plate ?? undefined} />
+                      <CarVerticalCard vin={opts.vin ?? undefined} />
+                      <CarfaxCard vin={opts.vin ?? undefined} />
+                    </motion.div>
+                  );
+                }
+                // tool invocation
+                if (p.type === "tool-invocation" && (p as Record<string, unknown>).toolName === "searchCars") {
+                  const result = (p as Record<string, unknown>).result as CarResult | undefined;
+                  if (result) {
+                    return <CarResultCard key={`${msg.id}-tool-${idx}`} car={result} />;
+                  }
+                }
+                return null;
+              })}
+            </div>
           ))}
         </AnimatePresence>
 

@@ -12,7 +12,7 @@ export const opencode = createOpenAICompatible({
   apiKey,
 });
 
-export const CHAT_MODEL = process.env.OPENCODE_MODEL || "deepseek-v4-pro";
+export const CHAT_MODEL = process.env.OPENCODE_MODEL || "qwen3.7-plus";
 
 export const AUTOMISHO_SYSTEM_PROMPT = `Eres AutoMisho, el copiloto IA experto en compraventa de coches de segunda mano en España.
 

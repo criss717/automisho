@@ -31,9 +31,21 @@ export default function ChatWindow({ conversationId, initialMessages = [] }: Cha
 
   const isLoading = status === "submitted" || status === "streaming";
 
-  const handleSubmit = (message: string) => {
-    if (!message.trim() || isLoading) return;
-    sendMessage({ text: message }, { body: { conversationId } });
+  const handleSubmit = (message: string, files?: FileList) => {
+    if ((!message.trim() && (!files || files.length === 0)) || isLoading) return;
+    if (files && files.length > 0) {
+      // Send with attachments for vision (qwen3.7-plus)
+      sendMessage(
+        {
+          text: message,
+          // @ts-expect-error - ai sdk supports files via experimental_attachments
+          files,
+        },
+        { body: { conversationId } }
+      );
+    } else {
+      sendMessage({ text: message }, { body: { conversationId } });
+    }
     setInput("");
   };
 

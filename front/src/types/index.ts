@@ -2,11 +2,15 @@ export type Plan = "free" | "premium" | "pro";
 
 export interface CarResult {
   title: string;
-  price: string;
-  year: string;
-  km: string;
-  location: string;
-  score: number;
-  alerts: number;
+  price: number | string;
+  year?: number | string | null;
+  km?: number | string | null;
+  location?: string | null;
+  score?: number | null;
+  alerts?: number | null;
   source: string;
+  url?: string;
+  image_url?: string | null;
+  fuel?: string | null;
+  currency?: string;
 }

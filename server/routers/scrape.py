@@ -1,9 +1,12 @@
 from fastapi import APIRouter, HTTPException
 from models.schemas import ScrapeRequest, ScrapeResponse, CarResult
 import httpx
-from bs4 import BeautifulSoup
+from bs4 import BeautifulSoup, SoupStrainer
 import re
 import logging
+import asyncio
+from urllib.parse import quote
+import json
 
 logger = logging.getLogger("scrape")
 router = APIRouter(prefix="/scrape", tags=["scraping"])
@@ -12,45 +15,26 @@ HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
     "Accept-Language": "es-ES,es;q=0.9,en;q=0.8",
-    "Accept-Encoding": "gzip, deflate",
+    "Accept-Encoding": "gzip, deflate, br",
+    "Referer": "https://www.google.es/",
+    "sec-ch-ua": '"Chromium";v="120", "Google Chrome";v="120", ";Not A Brand";v="99"',
 }
 
+CITY_COORDS = {
+    "madrid": (40.4168, -3.7038),
+    "barcelona": (41.3851, 2.1734),
+    "valencia": (39.4699, -0.3763),
+    "sevilla": (37.3891, -5.9845),
+    "zaragoza": (41.6488, -0.8891),
+    "bilbao": (43.2630, -2.9350),
+}
 
-@router.post("", response_model=ScrapeResponse)
-async def scrape_cars(req: ScrapeRequest):
-    """Scrape car listings from the selected source."""
-    results = []
-
-    if req.source == "auto":
-        for source in ["autoscout24", "cochesnet", "wallapop"]:
-            try:
-                partial = await _scrape_source(source, req)
-                logger.info(f"[{source}] returned {len(partial)} results")
-                results.extend(partial)
-            except Exception as e:
-                logger.error(f"[{source}] FAILED: {type(e).__name__}: {e}")
-                continue
-        results = results[: req.max_results]
-    else:
-        results = await _scrape_source(req.source, req)
-
-    return ScrapeResponse(
-        results=results,
-        source=req.source,
-        query=req.query,
-        total=len(results),
-    )
-
-
-async def _scrape_source(source: str, req: ScrapeRequest) -> list[CarResult]:
-    if source == "autoscout24":
-        return await _scrape_autoscout24(req)
-    elif source == "cochesnet":
-        return await _scrape_cochesnet(req)
-    elif source == "wallapop":
-        return await _scrape_wallapop(req)
-    else:
-        raise HTTPException(status_code=400, detail=f"Unsupported source: {source}")
+def _city_coords(query: str) -> tuple[float, float]:
+    q = query.lower()
+    for city, coords in CITY_COORDS.items():
+        if city in q:
+            return coords
+    return CITY_COORDS["madrid"]
 
 
 def _parse_price(text: str) -> int | None:
@@ -61,27 +45,122 @@ def _parse_price(text: str) -> int | None:
     return int(digits) if digits else None
 
 
+@router.post("", response_model=ScrapeResponse)
+async def scrape_cars(req: ScrapeRequest):
+    """Scrape car listings from the selected source."""
+    # Clamp max_results 1..12
+    req.max_results = max(1, min(req.max_results, 12))
+
+    if req.source == "auto":
+        tasks = [
+            _scrape_with_retry(_scrape_autoscout24, req),
+            _scrape_with_retry(_scrape_cochesnet, req),
+            _scrape_with_retry(_scrape_wallapop, req),
+            _scrape_with_retry(_scrape_milanuncios, req),
+        ]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        flat: list[CarResult] = []
+        for r in results:
+            if isinstance(r, list):
+                flat.extend(r)
+            elif isinstance(r, Exception):
+                logger.error(f"[scrape] source failed: {r}")
+            else:
+                logger.warning(f"[scrape] unexpected result type: {type(r)}")
+        # Deduplicate by url
+        seen: set[str] = set()
+        deduped: list[CarResult] = []
+        for c in flat:
+            if c.url and c.url not in seen:
+                seen.add(c.url)
+                deduped.append(c)
+            elif not c.url:
+                deduped.append(c)
+        # Ranking: score desc, then price asc
+        deduped.sort(key=lambda c: (-(getattr(c, "score", 0) or 0) if hasattr(c, "score") else 0, c.price or 999999))
+        sliced = deduped[: req.max_results]
+        logger.info(f"[scrape] auto aggregated {len(sliced)}/{len(flat)} from 4 sources")
+        return ScrapeResponse(
+            results=sliced,
+            source=req.source,
+            query=req.query,
+            total=len(sliced),
+        )
+    else:
+        single = await _scrape_with_retry(_scrape_source, req)
+        if isinstance(single, Exception):
+            logger.error(f"[scrape] single source failed: {single}")
+            single = []
+        sliced = single[: req.max_results] if isinstance(single, list) else []
+        return ScrapeResponse(
+            results=sliced,
+            source=req.source,
+            query=req.query,
+            total=len(sliced),
+        )
+
+
+async def _scrape_with_retry(fn, req, retries: int = 1):
+    for attempt in range(retries + 1):
+        try:
+            return await fn(req)
+        except httpx.HTTPError as e:
+            logger.error(f"[{fn.__name__}] attempt {attempt}: {e}")
+            if attempt < retries:
+                await asyncio.sleep(0.5)
+            else:
+                return []
+        except Exception as e:
+            logger.error(f"[{fn.__name__}] unexpected error attempt {attempt}: {type(e).__name__}: {e}")
+            if attempt < retries:
+                await asyncio.sleep(0.5)
+            else:
+                return []
+
+
+async def _scrape_source(source: str, req: ScrapeRequest) -> list[CarResult]:
+    if source == "autoscout24":
+        return await _scrape_autoscout24(req)
+    elif source == "cochesnet":
+        return await _scrape_cochesnet(req)
+    elif source == "wallapop":
+        return await _scrape_wallapop(req)
+    elif source == "milanuncios":
+        return await _scrape_milanuncios(req)
+    else:
+        raise HTTPException(status_code=400, detail=f"Unsupported source: {source}")
+
+
 async def _scrape_autoscout24(req: ScrapeRequest) -> list[CarResult]:
     """Scrape AutoScout24 Spain. Verified selectors 2026-08."""
     query_parts = req.query.lower().split()
-    # Extract make/model from query, skip noise words
+    # Noise without numbers
     noise = {"coches", "coche", "por", "de", "del", "un", "una", "el", "la", "los", "las",
              "menos", "más", "que", "euros", "€", "euro", "diesel", "diésel", "gasolina",
              "segunda", "mano", "hay", "buenos", "bueno", "baratos", "barato"}
     clean_parts = [p for p in query_parts if p not in noise and not p.isdigit()]
-    
-    if len(clean_parts) >= 2:
-        url = f"https://www.autoscout24.es/lst/{clean_parts[0]}/{clean_parts[1]}"
+
+    # URL builder robust with fallback to keywords param for ambiguous cases
+    if len(clean_parts) >= 2 and clean_parts[0] in {"suv", "berlina", "utilitario"} and clean_parts[1] in {"familiar", "compacto"}:
+        url = f"https://www.autoscout24.es/lst?keywords={quote(req.query)}"
+    elif len(clean_parts) >= 2:
+        url = f"https://www.autoscout24.es/lst/{quote(clean_parts[0])}/{quote(clean_parts[1])}"
     elif len(clean_parts) == 1:
-        url = f"https://www.autoscout24.es/lst/{clean_parts[0]}"
+        url = f"https://www.autoscout24.es/lst/{quote(clean_parts[0])}"
     else:
         url = "https://www.autoscout24.es/lst"
 
     params = {"atype": "C", "cy": "E", "desc": "0", "sort": "standard"}
     if req.max_price:
         params["priceto"] = str(req.max_price)
+    if req.min_price:
+        params["pricefrom"] = str(req.min_price)
+    if req.min_year:
+        params["cy"] = str(req.min_year)
+    if req.max_km:
+        params["km"] = str(req.max_km)
 
-    async with httpx.AsyncClient(headers=HEADERS, follow_redirects=True, timeout=20) as client:
+    async with httpx.AsyncClient(headers=HEADERS, follow_redirects=True, timeout=12) as client:
         try:
             resp = await client.get(url, params=params)
             resp.raise_for_status()
@@ -89,13 +168,21 @@ async def _scrape_autoscout24(req: ScrapeRequest) -> list[CarResult]:
             logger.error(f"AutoScout24 HTTP error: {e}")
             return []
 
-        soup = BeautifulSoup(resp.text, "lxml")
-        results = []
-
+        # SoupStrainer limited to article region to reduce parse overhead
+        strainer = SoupStrainer("article")
+        # Try with strainer first
+        soup = BeautifulSoup(resp.text, "lxml", parse_only=strainer)
         items = soup.select(".cldt-summary-full-item")
-        logger.info(f"AutoScout24: found {len(items)} items")
+        if not items:
+            # Fallback without strainer (structure changed)
+            soup = BeautifulSoup(resp.text, "lxml")
+            items = soup.select(".cldt-summary-full-item")
+        logger.info(f"AutoScout24: found {len(items)} items for url {url}")
 
-        for item in items[: req.max_results]:
+        results: list[CarResult] = []
+        # Respect max_results already clamped
+        limit = min(len(items), req.max_results or 12)
+        for item in items[:limit]:
             title_el = item.select_one("span[class*='ListItemTitle_title']")
             title = title_el.get_text(strip=True) if title_el else "Sin título"
 
@@ -108,6 +195,17 @@ async def _scrape_autoscout24(req: ScrapeRequest) -> list[CarResult]:
                 href = link_el["href"]
                 link = f"https://www.autoscout24.es{href}" if not href.startswith("http") else href
 
+            # image_url
+            img_el = item.select_one("img")
+            image_url = None
+            if img_el:
+                image_url = img_el.get("src") or img_el.get("data-src") or img_el.get("data-srcset")
+                if image_url and image_url.startswith("//"):
+                    image_url = "https:" + image_url
+                # handle srcset picking first
+                if image_url and "," in image_url:
+                    image_url = image_url.split(",")[0].strip().split(" ")[0]
+
             details = item.select("[class*='vehicleDetails'] span")
             km, year, fuel = None, None, None
             for span in details:
@@ -116,12 +214,12 @@ async def _scrape_autoscout24(req: ScrapeRequest) -> list[CarResult]:
                     km = int(re.sub(r"[^\d]", "", text)) if re.search(r"\d", text) else None
                 elif re.match(r"^(19|20)\d{2}$", text):
                     year = int(text)
-                elif text.lower() in ("gasolina", "diésel", "diesel", "eléctrico", "híbrido"):
+                elif text.lower() in ("gasolina", "diésel", "diesel", "eléctrico", "híbrido", "electrico"):
                     fuel = text
 
             results.append(CarResult(
                 title=title, price=price, year=year, km=km, fuel=fuel,
-                url=link, source="autoscout24",
+                url=link, image_url=image_url, source="autoscout24",
             ))
 
         return results
@@ -131,12 +229,11 @@ async def _scrape_cochesnet(req: ScrapeRequest) -> list[CarResult]:
     """Scrape coches.net. Verified selectors 2026-08."""
     url = "https://www.coches.net/segunda-mano/"
 
-    # Clean query for coches.net — extract make/model
+    # Clean query for coches.net — extract make/model without numbers
     query = req.query.lower()
     noise = {"coches", "coche", "por", "de", "del", "un", "una", "el", "la", "los", "las",
              "menos", "más", "que", "euros", "€", "euro", "diesel", "diésel", "gasolina",
-             "segunda", "mano", "hay", "buenos", "bueno", "baratos", "barato",
-             "2000", "2500", "3000", "5000", "10000", "15000", "20000"}
+             "segunda", "mano", "hay", "buenos", "bueno", "baratos", "barato"}
     clean_query = " ".join(w for w in query.split() if w not in noise and not w.isdigit())
     if not clean_query:
         clean_query = req.query
@@ -146,8 +243,12 @@ async def _scrape_cochesnet(req: ScrapeRequest) -> list[CarResult]:
         params["MinPrice"] = str(req.min_price)
     if req.max_price:
         params["MaxPrice"] = str(req.max_price)
+    if req.min_year:
+        params["MinYear"] = str(req.min_year)
+    if req.max_km:
+        params["MaxKm"] = str(req.max_km)
 
-    async with httpx.AsyncClient(headers=HEADERS, follow_redirects=True, timeout=20) as client:
+    async with httpx.AsyncClient(headers=HEADERS, follow_redirects=True, timeout=12) as client:
         try:
             resp = await client.get(url, params=params)
             resp.raise_for_status()
@@ -155,23 +256,40 @@ async def _scrape_cochesnet(req: ScrapeRequest) -> list[CarResult]:
             logger.error(f"coches.net HTTP error: {e}")
             return []
 
-        soup = BeautifulSoup(resp.text, "lxml")
-        results = []
-
+        # limit parse via SoupStrainer for card ads
+        strainer = SoupStrainer("div", class_="mt-CardAd")
+        soup = BeautifulSoup(resp.text, "lxml", parse_only=strainer)
         items = soup.select(".mt-CardAd")
-        logger.info(f"coches.net: found {len(items)} items")
+        if not items:
+            soup = BeautifulSoup(resp.text, "lxml")
+            items = soup.select(".mt-CardAd")
+        logger.info(f"coches.net: found {len(items)} items for Keywords={clean_query}")
 
-        for item in items[: req.max_results]:
+        results: list[CarResult] = []
+        limit = min(len(items), req.max_results or 12)
+        for item in items[:limit]:
             title_el = item.select_one(".mt-CardAd-infoHeaderTitleLink")
             title = title_el.get_text(strip=True) if title_el else "Sin título"
 
             price_el = item.select_one("[data-testid='card-adPrice-price']")
+            # fallback selector
+            if not price_el:
+                price_el = item.select_one(".mt-CardAd-price")
             price = _parse_price(price_el.get_text(strip=True)) if price_el else None
 
             link = ""
             if title_el and title_el.get("href"):
                 href = title_el["href"]
                 link = f"https://www.coches.net{href}" if not href.startswith("http") else href
+
+            img_el = item.select_one("img")
+            image_url = None
+            if img_el:
+                image_url = img_el.get("src") or img_el.get("data-src") or img_el.get("data-srcset")
+                if image_url and image_url.startswith("//"):
+                    image_url = "https:" + image_url
+                if image_url and "," in image_url:
+                    image_url = image_url.split(",")[0].strip().split(" ")[0]
 
             attrs = item.select(".mt-CardAd-attrItem")
             km, year, fuel = None, None, None
@@ -186,7 +304,7 @@ async def _scrape_cochesnet(req: ScrapeRequest) -> list[CarResult]:
 
             results.append(CarResult(
                 title=title, price=price, year=year, km=km, fuel=fuel,
-                url=link, source="coches.net",
+                url=link, image_url=image_url, source="coches.net",
             ))
 
         return results
@@ -196,11 +314,13 @@ async def _scrape_wallapop(req: ScrapeRequest) -> list[CarResult]:
     """Scrape Wallapop using their public search page (no API key needed)."""
     url = "https://es.wallapop.com/app/search"
 
+    lat, lon = _city_coords(req.query)
+
     params = {
         "keywords": req.query,
         "category_ids": "100",  # Cars
-        "latitude": "40.4168",
-        "longitude": "-3.7038",
+        "latitude": str(lat),
+        "longitude": str(lon),
         "order_by": "newest",
     }
     if req.max_price:
@@ -208,53 +328,227 @@ async def _scrape_wallapop(req: ScrapeRequest) -> list[CarResult]:
     if req.min_price:
         params["min_sale_price"] = str(req.min_price)
 
-    async with httpx.AsyncClient(headers=HEADERS, follow_redirects=True, timeout=20) as client:
+    async with httpx.AsyncClient(headers=HEADERS, follow_redirects=True, timeout=12) as client:
         try:
-            # Wallapop renders with JS, but the SSR page has initial data
             resp = await client.get(url, params=params)
             resp.raise_for_status()
         except httpx.HTTPError as e:
             logger.error(f"Wallapop HTTP error: {e}")
             return []
 
-        soup = BeautifulSoup(resp.text, "lxml")
-        results = []
+        # Use SoupStrainer for script tag with NEXT_DATA to reduce parse
+        strainer = SoupStrainer("script", id="__NEXT_DATA__")
+        soup = BeautifulSoup(resp.text, "lxml", parse_only=strainer)
+        results: list[CarResult] = []
 
-        # Wallapop SSR uses data embedded in script tags
-        # Try to find __NEXT_DATA__ or similar
         script_tags = soup.select("script[id='__NEXT_DATA__']")
-        if script_tags:
-            import json
+        if not script_tags:
+            # fallback without strainer
+            soup_full = BeautifulSoup(resp.text, "lxml")
+            script_tags = soup_full.select("script[id='__NEXT_DATA__']")
+
+        if script_tags and script_tags[0].string:
+            # Guard against huge JSON (DoS) — limit 1MB
+            content = script_tags[0].string
+            if len(content) > 1_000_000:
+                logger.warning("[wallapop] NEXT_DATA too large, truncating")
+                content = content[:1_000_000]
             try:
-                data = json.loads(script_tags[0].string)
-                items = data.get("props", {}).get("pageProps", {}).get("items", [])
-                for item in items[: req.max_results]:
+                data = json.loads(content)
+                # Try multiple paths for items
+                items = (
+                    data.get("props", {}).get("pageProps", {}).get("items", [])
+                    or data.get("props", {}).get("pageProps", {}).get("searchObjects", [])
+                    or []
+                )
+                logger.info(f"Wallapop: found {len(items)} items via NEXT_DATA")
+                for item in items[: req.max_results or 12]:
+                    # Normalize price: item.price may be dict or int
+                    price_val = item.get("price")
+                    if isinstance(price_val, dict):
+                        price_val = price_val.get("amount")
+                    try:
+                        price_int = int(re.sub(r"[^\d]", "", str(price_val))) if price_val else None
+                    except:
+                        price_int = None
+                    # year/km/fuel may be in attributes
+                    year = item.get("year")
+                    km = item.get("km") or item.get("mileage")
+                    fuel = item.get("fuel")
+                    location = ""
+                    loc = item.get("location") or {}
+                    if isinstance(loc, dict):
+                        location = loc.get("city", "") or loc.get("cityName", "")
+                    images = item.get("images") or []
+                    image_url = None
+                    if images and isinstance(images, list):
+                        first = images[0]
+                        if isinstance(first, dict):
+                            image_url = first.get("original") or first.get("url") or first.get("xlarge")
+                        elif isinstance(first, str):
+                            image_url = first
+                    web_slug = item.get("web_slug") or item.get("id") or ""
+                    url_item = f"https://es.wallapop.com/item/{web_slug}" if web_slug else ""
                     results.append(CarResult(
                         title=item.get("title", "Sin título"),
-                        price=item.get("price"),
-                        year=item.get("year"),
-                        km=item.get("km"),
-                        fuel=item.get("fuel"),
-                        location=item.get("location", {}).get("city", ""),
-                        url=f"https://es.wallapop.com/item/{item.get('web_slug', '')}",
-                        image_url=item.get("images", [{}])[0].get("original") if item.get("images") else None,
+                        price=price_int,
+                        year=int(year) if isinstance(year, (int, str)) and str(year).isdigit() else None,
+                        km=int(re.sub(r"[^\d]", "", str(km))) if km else None,
+                        fuel=fuel,
+                        location=location,
+                        url=url_item,
+                        image_url=image_url,
                         source="wallapop",
                     ))
-            except (json.JSONDecodeError, KeyError) as e:
+                if results:
+                    return results
+            except (json.JSONDecodeError, KeyError, ValueError) as e:
                 logger.error(f"Wallapop JSON parse error: {e}")
-        else:
-            # Fallback: try to parse HTML directly
-            cards = soup.select("[class*='ItemCard'], [class*='card-item']")
-            logger.info(f"Wallapop HTML fallback: {len(cards)} cards")
-            for card in cards[: req.max_results]:
-                title_el = card.select_one("[class*='title'], h3, h2")
-                price_el = card.select_one("[class*='price']")
-                link_el = card.select_one("a[href]")
-                results.append(CarResult(
-                    title=title_el.get_text(strip=True) if title_el else "Sin título",
-                    price=_parse_price(price_el.get_text(strip=True)) if price_el else None,
-                    url=link_el["href"] if link_el and link_el.get("href") else "",
-                    source="wallapop",
-                ))
+                # fall through to HTML fallback
+
+        # Fallback: try to parse HTML directly if NEXT_DATA failed or empty
+        soup_fallback = BeautifulSoup(resp.text, "lxml")
+        cards = soup_fallback.select("[class*='ItemCard'], [class*='card-item'], [class*='productCard']")
+        logger.info(f"Wallapop HTML fallback: {len(cards)} cards")
+        limit = min(len(cards), req.max_results or 12)
+        for card in cards[:limit]:
+            title_el = card.select_one("[class*='title'], h3, h2")
+            price_el = card.select_one("[class*='price']")
+            link_el = card.select_one("a[href]")
+            img_el = card.select_one("img")
+            image_url = None
+            if img_el:
+                image_url = img_el.get("src") or img_el.get("data-src")
+                if image_url and image_url.startswith("//"):
+                    image_url = "https:" + image_url
+            href = link_el["href"] if link_el and link_el.get("href") else ""
+            if href and not href.startswith("http"):
+                href = f"https://es.wallapop.com{href}"
+            results.append(CarResult(
+                title=title_el.get_text(strip=True) if title_el else "Sin título",
+                price=_parse_price(price_el.get_text(strip=True)) if price_el else None,
+                url=href,
+                image_url=image_url,
+                source="wallapop",
+            ))
+
+        return results
+
+
+async def _scrape_milanuncios(req: ScrapeRequest) -> list[CarResult]:
+    """Scrape Milanuncios second-hand cars."""
+    # Build URL with price filters
+    base_url = "https://www.milanuncios.com/coches-de-segunda-mano/"
+    query = req.query.lower()
+    # Clean query similar to cochesnet without numbers
+    noise = {"coches", "coche", "por", "de", "del", "un", "una", "el", "la", "los", "las",
+             "menos", "más", "que", "euros", "€", "euro", "diesel", "diésel", "gasolina",
+             "segunda", "mano", "hay", "buenos", "bueno", "baratos", "barato"}
+    clean_query = " ".join(w for w in query.split() if w not in noise and not w.isdigit())
+    if not clean_query:
+        clean_query = req.query
+
+    params: dict[str, str] = {"demanda": "n"}
+    if req.max_price:
+        params["precio-hasta"] = str(req.max_price)
+    if req.min_price:
+        params["precio-desde"] = str(req.min_price)
+    # Milanuncios uses `s` for search keywords in some URLs
+    if clean_query and clean_query != req.query:
+        params["s"] = clean_query
+
+    # Some Milanuncios search URLs use path with keywords
+    url = base_url
+
+    async with httpx.AsyncClient(headers=HEADERS, follow_redirects=True, timeout=12) as client:
+        try:
+            resp = await client.get(url, params=params)
+            resp.raise_for_status()
+        except httpx.HTTPError as e:
+            logger.error(f"Milanuncios HTTP error: {e}")
+            return []
+
+        # Use SoupStrainer for article cards
+        strainer = SoupStrainer("article")
+        soup = BeautifulSoup(resp.text, "lxml", parse_only=strainer)
+        items = soup.select("article.ma-AdCardV2")
+        if not items:
+            items = soup.select("article.ma-AdCard")
+        if not items:
+            # broader fallback
+            soup_full = BeautifulSoup(resp.text, "lxml")
+            items = soup_full.select("article.ma-AdCardV2, article.ma-AdCard, div.ad-card, article[data-testid='ad-card']")
+            if not items:
+                items = soup_full.select("article")
+                # filter only those with price hint
+                items = [a for a in items if a.select_one("[class*='price'], [class*='Price']")]
+        logger.info(f"Milanuncios: found {len(items)} items for {clean_query} max_price={req.max_price}")
+
+        results: list[CarResult] = []
+        limit = min(len(items), req.max_results or 12)
+        for item in items[:limit]:
+            # Title: look for h2/h3 or link with card title
+            title_el = item.select_one("a.ma-AdCard-titleLink, h2, h3, a[class*='title'], .adCard__title")
+            title = title_el.get_text(strip=True) if title_el else "Sin título"
+            if not title or title == "Sin título":
+                # fallback: first link text
+                link_fallback = item.select_one("a[href*='/coches-']")
+                if link_fallback:
+                    title = link_fallback.get_text(strip=True) or title
+
+            price_el = item.select_one(".ma-AdCard-price, [class*='price'], .adCard__price")
+            price = _parse_price(price_el.get_text(strip=True)) if price_el else None
+
+            link_el = item.select_one("a[href]")
+            link = ""
+            if link_el and link_el.get("href"):
+                href = link_el["href"]
+                if href.startswith("/"):
+                    link = f"https://www.milanuncios.com{href}"
+                elif href.startswith("http"):
+                    link = href
+                else:
+                    link = f"https://www.milanuncios.com/{href.strip('/')}"
+
+            img_el = item.select_one("img")
+            image_url = None
+            if img_el:
+                image_url = img_el.get("src") or img_el.get("data-src") or img_el.get("data-srcset") or img_el.get("data-original")
+                if image_url and image_url.startswith("//"):
+                    image_url = "https:" + image_url
+                if image_url and image_url.startswith("/"):
+                    image_url = "https://www.milanuncios.com" + image_url
+                if image_url and "," in image_url:
+                    image_url = image_url.split(",")[0].strip().split(" ")[0]
+
+            # Try to extract year/km from details
+            details_text = item.get_text(" ", strip=True)
+            km, year = None, None
+            # look for km pattern
+            m_km = re.search(r"(\d[\d\s\.]*)\s*km", details_text, re.I)
+            if m_km:
+                km = int(re.sub(r"[^\d]", "", m_km.group(1))) if re.search(r"\d", m_km.group(1)) else None
+            m_year = re.search(r"\b(19\d{2}|20\d{2})\b", details_text)
+            if m_year:
+                try:
+                    year = int(m_year.group(1))
+                except:
+                    year = None
+
+            fuel = None
+            for f in ("Gasolina", "Diésel", "Diesel", "Eléctrico", "Híbrido", "Hibrido"):
+                if f.lower() in details_text.lower():
+                    fuel = f
+                    break
+
+            # Filter out non-car items if possible
+            if not price and not year and "coche" not in details_text.lower() and "km" not in details_text.lower():
+                # Might be generic article, skip if too vague and we have many results
+                pass
+
+            results.append(CarResult(
+                title=title, price=price, year=year, km=km, fuel=fuel,
+                url=link, image_url=image_url, source="milanuncios",
+            ))
 
         return results
