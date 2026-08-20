@@ -57,11 +57,11 @@ export default function ChatConversationPage() {
   }
 
   return (
-    <div className="h-full flex">
+    <div className="h-full flex min-h-0 overflow-hidden">
       <ConversationSidebar currentId={conversationId} />
-      <div className="flex-1 flex flex-col min-w-0">
-        <div className="flex-1 flex justify-center">
-          <div className="w-full max-w-3xl flex flex-col px-6">
+      <div className="flex-1 flex flex-col min-w-0 min-h-0 overflow-hidden">
+        <div className="flex-1 flex justify-center min-h-0 overflow-hidden">
+          <div className="w-full max-w-3xl flex flex-col min-h-0 h-full overflow-hidden">
             <ChatWindow conversationId={conversationId} initialMessages={initialMessages} />
           </div>
         </div>

@@ -49,21 +49,25 @@ export default function ChatWindow({ conversationId, initialMessages = [] }: Cha
   };
 
   return (
-    <div className="flex flex-col h-full">
-      <MessageList messages={messages} isLoading={isLoading} />
+    <div className="flex flex-col h-full min-h-0 overflow-hidden">
+      <div className="flex-1 min-h-0 overflow-hidden flex flex-col">
+        <MessageList messages={messages} isLoading={isLoading} />
+      </div>
 
       {error && (
-        <div className="px-4 py-2 bg-red-500/10 border-t border-red-500/30 text-red-400 text-xs text-center">
+        <div className="shrink-0 px-4 py-2 bg-red-500/10 border-t border-red-500/30 text-red-400 text-xs text-center">
           Error al conectar con AutoMisho. Intenta de nuevo.
         </div>
       )}
 
-      <MessageInput
-        value={input}
-        onChange={setInput}
-        onSubmit={handleSubmit}
-        isLoading={isLoading}
-      />
+      <div className="shrink-0">
+        <MessageInput
+          value={input}
+          onChange={setInput}
+          onSubmit={handleSubmit}
+          isLoading={isLoading}
+        />
+      </div>
     </div>
   );
 }
