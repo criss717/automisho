@@ -14,28 +14,31 @@ export default async function DashboardPage() {
 
   if (!session?.user) return null;
 
-  const [conversationCount, messageCount, memberSince] = await Promise.all([
+  const [conversationCount, messageCount, dbUser] = await Promise.all([
     prisma.conversation.count({ where: { userId: session.user.id } }),
     prisma.message.count({
       where: { conversation: { userId: session.user.id } },
     }),
     prisma.user.findUnique({
       where: { id: session.user.id },
-      select: { createdAt: true },
+      select: { createdAt: true, plan: true },
     }),
   ]);
 
-  const memberDate = memberSince?.createdAt
-    ? new Date(memberSince.createdAt).toLocaleDateString("es-ES", {
+  const memberDate = dbUser?.createdAt
+    ? new Date(dbUser.createdAt).toLocaleDateString("es-ES", {
         year: "numeric",
         month: "long",
       })
     : "Desconocido";
 
+  // Use DB plan, not session stale (session JWT may lag behind webhook/refresh)
+  const currentPlan = (dbUser?.plan as "free" | "premium" | "pro") || (session.user.plan as "free" | "premium" | "pro") || "free";
+
   return (
     <div className="relative h-full overflow-y-auto overflow-x-hidden">
       <DashboardBlobs />
-      <div className="relative max-w-6xl mx-auto px-8 py-10">
+      <div className="relative max-w-6xl mx-auto px-6 md:px-8 py-8">
         <Suspense fallback={null}>
           <DashboardSuccessRefresh />
         </Suspense>
@@ -46,9 +49,9 @@ export default async function DashboardPage() {
         </DashboardHeader>
 
         <DashboardStaggerGrid>
-          <PlanCard currentPlan={session.user.plan as "free" | "premium" | "pro"} />
+          <PlanCard currentPlan={currentPlan} />
           <UsageStats
-            plan={session.user.plan as "free" | "premium" | "pro"}
+            plan={currentPlan}
             conversationCount={conversationCount}
             messageCount={messageCount}
             memberSince={memberDate}

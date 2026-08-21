@@ -73,8 +73,16 @@ export default function DashboardSuccessRefresh() {
         </div>
       )}
       {status === "error" && (
-        <div className="glass-card border-amber-400/20 py-3">
-          <span className="text-sm text-amber-300">Pago recibido, actualizando tu plan… Si no ves el cambio en unos segundos, recarga la página.</span>
+        <div className="glass-card border-amber-400/20 py-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <span className="text-sm text-amber-300 leading-snug">
+            Pago recibido — si no ves Premium en unos minutos, refresca la página o contacta soporte. En local sin Stripe CLI puede tardar; el sistema reintentará al recargar.
+          </span>
+          <button
+            onClick={() => window.location.reload()}
+            className="shrink-0 px-4 py-2 rounded-full bg-amber-400/15 border border-amber-400/20 text-amber-200 text-xs font-medium hover:bg-amber-400/20 transition-colors"
+          >
+            Refrescar ahora
+          </button>
         </div>
       )}
     </div>
