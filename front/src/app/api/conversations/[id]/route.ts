@@ -60,7 +60,16 @@ export async function DELETE(
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 
+  // Explicit cascade: delete messages first (DB also has onDelete Cascade, but explicit ensures count drops reliably)
+  try {
+    await prisma.message.deleteMany({ where: { conversationId: id } });
+  } catch (e) {
+    console.warn("[conversations] DELETE message cascade warning", e);
+  }
   await prisma.conversation.delete({ where: { id } });
+
+  const remaining = await prisma.conversation.count({ where: { userId: session.user.id } });
+  console.log(`[conversations] DELETE ${id} for user ${session.user.id} → remaining ${remaining}`);
 
   return new Response(null, { status: 204 });
 }

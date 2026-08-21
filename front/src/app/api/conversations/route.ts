@@ -42,20 +42,33 @@ export async function POST(req: Request) {
     return rateLimitResponse();
   }
 
-  const plan = session.user.plan || "free";
-  const limit = PLAN_LIMITS[plan];
+  // Prefer DB plan (session JWT may be stale after Stripe webhook/refresh)
+  let plan = (session.user.plan as string) || "free";
+  try {
+    const dbUser = await prisma.user.findUnique({
+      where: { id: session.user.id },
+      select: { plan: true },
+    });
+    if (dbUser?.plan) plan = dbUser.plan;
+  } catch (e) {
+    console.warn("[conversations] POST plan lookup failed, using session plan", e);
+  }
+  const limit = PLAN_LIMITS[plan] ?? PLAN_LIMITS.free;
 
   const count = await prisma.conversation.count({
     where: { userId: session.user.id },
   });
 
+  console.log(`[conversations] POST check user=${session.user.id} plan=${plan} count=${count} limit=${limit}`);
+
   if (count >= limit) {
     return NextResponse.json(
       {
         error: "conversation_limit_reached",
-        message: `Has alcanzado el límite de ${limit} conversaciones para tu plan ${plan}.`,
+        message: `Has alcanzado el límite de ${limit} conversaciones para tu plan ${plan}. Borra alguna conversación o mejora tu plan.`,
         plan,
         limit,
+        count,
       },
       { status: 403 }
     );
