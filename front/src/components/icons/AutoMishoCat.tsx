@@ -14,17 +14,14 @@ export default function AutoMishoCat({ size = 280, className = "" }: AutoMishoCa
 
   const mouseX = useMotionValue(0);
   const mouseY = useMotionValue(0);
-  const springX = useSpring(mouseX, { stiffness: 180, damping: 18 });
-  const springY = useSpring(mouseY, { stiffness: 180, damping: 18 });
+  const springX = useSpring(mouseX, { stiffness: 120, damping: 12 });
+  const springY = useSpring(mouseY, { stiffness: 120, damping: 12 });
 
-  // iris 3px, pupil 1.5px, head 0.8deg, body 0.3, legs 0.2
+  // only eyes move — iris 3px, pupil 1.5px; body/head stay fixed
   const irisX = useTransform(springX, (v) => Math.max(-3, Math.min(3, v * 3)));
   const irisY = useTransform(springY, (v) => Math.max(-3, Math.min(3, v * 3)));
   const pupilX = useTransform(springX, (v) => Math.max(-1.5, Math.min(1.5, v * 1.5)));
   const pupilY = useTransform(springY, (v) => Math.max(-1.5, Math.min(1.5, v * 1.5)));
-  const headRotate = useTransform(springX, (v) => v * 0.8);
-  const bodyRotate = useTransform(springX, (v) => v * 0.3);
-  const legsRotate = useTransform(springX, (v) => v * 0.2);
 
   useEffect(() => {
     const onMove = (e: MouseEvent) => {
@@ -108,8 +105,8 @@ export default function AutoMishoCat({ size = 280, className = "" }: AutoMishoCa
         <polygon points="57,86 63,83 69,86 69,92 63,95 57,92" fill="#23524c" stroke="#97fcd7" strokeWidth="1.5" />
       </g>
 
-      {/* BODY */}
-      <motion.g id="body" style={{ rotate: bodyRotate, transformOrigin: "140px 180px", willChange: "transform" } as unknown as React.CSSProperties}>
+      {/* BODY — fixed, no float/rotate */}
+      <g id="body">
         <rect x="90" y="150" width="100" height="70" rx="20" fill="url(#metalBody)" stroke="#33998c" strokeWidth="1.5" />
         <line x1="110" y1="155" x2="110" y2="215" stroke="#1c3f38" strokeWidth="1" opacity="0.5" />
         <line x1="140" y1="155" x2="140" y2="215" stroke="#1c3f38" strokeWidth="1" opacity="0.5" />
@@ -128,10 +125,10 @@ export default function AutoMishoCat({ size = 280, className = "" }: AutoMishoCa
             <circle cx={x} cy={y} r="1" fill="#97fcd7" opacity="0.6" />
           </g>
         ))}
-      </motion.g>
+      </g>
 
-      {/* LEGS */}
-      <motion.g id="legs" style={{ rotate: legsRotate, transformOrigin: "140px 220px", willChange: "transform" } as unknown as React.CSSProperties}>
+      {/* LEGS — fixed, no rotate */}
+      <g id="legs">
         {[100,130,155,175].map((x,i)=>(
           <g key={i}>
             <rect x={x} y="215" width="12" height="30" rx="4" fill="url(#metalBody)" stroke="#33998c" strokeWidth="1" />
@@ -140,10 +137,10 @@ export default function AutoMishoCat({ size = 280, className = "" }: AutoMishoCa
             <rect x={x-2} y="242" width="16" height="8" rx="4" fill="#23524c" stroke="#33998c" strokeWidth="1" />
           </g>
         ))}
-      </motion.g>
+      </g>
 
-      {/* HEAD */}
-      <motion.g id="head" style={{ rotate: headRotate, transformOrigin: "140px 110px", willChange: "transform" } as unknown as React.CSSProperties}>
+      {/* HEAD — fixed, only eyes move */}
+      <g id="head">
         <rect x="125" y="130" width="30" height="25" rx="8" fill="url(#metalBody)" stroke="#33998c" strokeWidth="1" />
         <circle cx="133" cy="142" r="2.5" fill="#0f3933" stroke="#97fcd7" strokeWidth="1" />
         <circle cx="147" cy="142" r="2.5" fill="#0f3933" stroke="#97fcd7" strokeWidth="1" />
@@ -240,7 +237,7 @@ export default function AutoMishoCat({ size = 280, className = "" }: AutoMishoCa
         </g>
         {/* EYELIDS helper group for spec */}
         <g id="eyelids" style={{ display: "none" }} />
-      </motion.g>
+      </g>
 
       <ellipse cx="140" cy="260" rx="50" ry="8" fill="rgba(7,39,36,0.5)" filter="url(#mintGlow)" />
     </svg>

@@ -57,6 +57,7 @@ export default function DgtLookupInput() {
 
       <div className="flex gap-2 mb-4">
         <input
+          suppressHydrationWarning
           type="text"
           value={plate}
           onChange={(e) => setPlate(e.target.value.toUpperCase())}
@@ -66,6 +67,7 @@ export default function DgtLookupInput() {
           className="flex-1 glass-input px-4 py-2.5 text-sm text-pure-light placeholder:text-mist-gray/40 focus:outline-none focus:border-mint-glow/40 transition-colors"
         />
         <button
+          suppressHydrationWarning
           onClick={handleLookup}
           disabled={loading || !plate.trim()}
           className="shrink-0 px-4 py-2.5 rounded-lg bg-mint-glow text-forest-depths text-sm font-medium disabled:opacity-30 disabled:cursor-not-allowed hover:shadow-[0_0_12px_rgba(151,252,215,0.4)] transition-all"

@@ -75,7 +75,6 @@ export default function Hero() {
           <img
             src="/assets/hero_logo.svg"
             alt="AutoMisho - Tu copiloto IA"
-            className="float"
             style={{ width: "300px", height: "auto", filter: "drop-shadow(0 0 30px rgba(151,252,215,0.15))" }}
           />
         </motion.div>

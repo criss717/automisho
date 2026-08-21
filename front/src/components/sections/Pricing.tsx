@@ -136,8 +136,8 @@ export default function Pricing() {
                 <p className="text-caption text-mist-gray mb-4">
                   {plan.description}
                 </p>
-                <div className="flex items-baseline gap-1">
-                  <span className="text-display text-pure-light font-teodor">
+                <div className="flex items-baseline gap-1 flex-wrap">
+                  <span className="text-[2.2rem] md:text-[2.8rem] leading-none text-pure-light font-teodor tracking-tight">
                     {plan.price}
                   </span>
                   <span className="text-body-sm text-mist-gray">

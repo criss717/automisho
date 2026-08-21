@@ -100,8 +100,8 @@ export default function Demo() {
             </div>
           </div>
 
-          {/* Messages */}
-          <div style={{ minHeight: "300px", display: "flex", flexDirection: "column", gap: "16px" }}>
+          {/* Messages — fixed height to avoid jump when content loads */}
+          <div style={{ minHeight: "520px", height: "520px", display: "flex", flexDirection: "column", gap: "16px", overflow: "hidden" }}>
             <AnimatePresence>
               {chatMessages.slice(0, visibleMessages).map((msg, index) => (
                 <motion.div
