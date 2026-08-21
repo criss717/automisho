@@ -16,7 +16,7 @@ jest.mock("@/lib/prisma", () => ({
 }));
 jest.mock("@/lib/ai", () => ({ opencode: jest.fn(), CHAT_MODEL: "qwen3.7-plus", AUTOMISHO_SYSTEM_PROMPT: "test" }));
 
-import { detectCarSearch, detectPlate, detectVIN } from "@/app/api/chat/route";
+import { detectCarSearch, detectPlate, detectVIN } from "@/lib/chat-helpers";
 
 describe("detectCarSearch", () => {
   const fixtures: Array<{ query: string; isSearch: boolean; maxPrice?: number; minPrice?: number }> = [

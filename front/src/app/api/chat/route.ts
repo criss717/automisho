@@ -13,134 +13,8 @@ import { checkRateLimit, rateLimitResponse } from "@/lib/rate-limit";
 
 const BACKEND_URL = process.env.BACKEND_URL || "http://localhost:8000";
 
-// ── Helpers ───────────────────────────────────────────────────────────────
-
-function parsePrice(s: string): number {
-  // "3.000" → 3000, "15.5" → 155 (without k) but clamped; k handled separately
-  const cleaned = s.replace(/[.,]/g, "").replace(/k/i, "000");
-  const digits = cleaned.replace(/[^\d]/g, "");
-  const n = parseInt(digits, 10);
-  if (isNaN(n)) return 0;
-  // Clamp price 500..100000 per spec
-  return Math.max(500, Math.min(100000, n));
-}
-
-function parsePriceSmart(raw: string, fullMatch: string): number {
-  const hasK = /k/i.test(fullMatch);
-  if (hasK) {
-    // handle "15.5k" -> 15500, "15k" -> 15000, "15.000k" -> 15000
-    const normalized = raw.replace(",", ".").trim();
-    const f = parseFloat(normalized.replace(/[^\d.]/g, ""));
-    if (isNaN(f)) return 0;
-    const val = Math.round(f * 1000);
-    return Math.max(500, Math.min(100000, val));
-  }
-  return parsePrice(raw);
-}
-
-// Detect VIN 17 chars without I,O,Q
-export function detectVIN(message: string): string | null {
-  const m = message.match(/\b[A-HJ-NPR-Z0-9]{17}\b/i);
-  return m ? m[0].toUpperCase() : null;
-}
-
-// Detect DGT plate without A,E,I,O,U,Q,Ñ
-export function detectPlate(message: string): string | null {
-  const m = message.match(/\b(\d{4}[\s-]?[BCDFGHJKLMNPRSTVWXYZ]{3})\b/i);
-  if (!m) return null;
-  const normalized = m[1].toUpperCase().replace(/[\s-]/g, "");
-  return normalized.replace(/(.{4})/, "$1-");
-}
-
-export function detectCarSearch(message: string): {
-  isSearch: boolean;
-  query: string;
-  maxPrice?: number;
-  minPrice?: number;
-} {
-  const lower = message.toLowerCase();
-  let maxPrice: number | undefined;
-  let minPrice: number | undefined;
-
-  // 8 price patterns in priority order
-  // Note: order matters — entre range first, then k€, then specific, then generic €
-  const patterns: RegExp[] = [
-    /entre\s+(\d[\d.,]*)\s*(?:k\s*)?\s+y\s+(\d[\d.,]*)\s*(?:k\s*)?(?:€|euros?|eur)?/i, // entre X y Y
-    /(\d[\d.,]*)\s*k\s*(?:€|euros?)?/i, // 15k, 15.5k €
-    /menos\s+de\s+(\d[\d.,]*)\s*(?:k\s*)?(?:€|euros?)?/i,
-    /hasta\s+(\d[\d.,]*)\s*(?:k\s*)?(?:€|euros?)?/i,
-    /máximo|máx\.?\s*(\d[\d.,]*)/i,
-    /(\d[\d.,]*)\s*(?:€|euros?|eur)/i,
-    /por\s+(\d[\d.,]*)/i,
-    /(?:presupuesto|budget)\s+(?:de\s+)?(\d[\d.,]*)/i,
-  ];
-
-  for (const pat of patterns) {
-    const m = lower.match(pat);
-    if (!m) continue;
-    // entre pattern has 2 groups
-    if (pat.source.includes("entre") && m[1] && m[2]) {
-      const a = parsePriceSmart(m[1], m[0]);
-      const b = parsePriceSmart(m[2], m[0]);
-      if (a && b) {
-        minPrice = Math.min(a, b);
-        maxPrice = Math.max(a, b);
-      }
-    } else {
-      // find first non-undefined group
-      const raw = m[1] ?? m[2] ?? m[3] ?? m[4];
-      // For máximo pattern, group may be at 1 but regex splits differently; handle fallback
-      const candidate = raw || m[0].match(/(\d[\d.,]*)/)?.[1];
-      if (candidate) {
-        const parsed = parsePriceSmart(candidate, m[0]);
-        if (parsed) maxPrice = parsed;
-      }
-    }
-    if (maxPrice !== undefined) break;
-  }
-
-  // Also try to capture máx with separate handling if first attempt missed due to alternation
-  if (maxPrice === undefined) {
-    const maxPattern = /(?:máximo|máx\.?)\s*(\d[\d.,]*)\s*(?:k\s*)?(?:€|euros?)?/i;
-    const m = lower.match(maxPattern);
-    if (m && m[1]) maxPrice = parsePriceSmart(m[1], m[0]);
-  }
-
-  const searchKeywords = [
-    "coche", "coches", "vehículo", "vehiculos", "car",
-    "busco", "buscar", "quiero", "necesito", "hay",
-    "opciones", "disponibles", "en venta", "segunda mano",
-    "suv", "berlina", "utilitario", "familiar",
-    "diésel", "diesel", "gasolina", "eléctrico", "hibrido", "híbrido",
-    "seat", "volkswagen", "vw", "renault", "peugeot", "toyota",
-    "bmw", "mercedes", "ford", "opel", "nissan", "hyundai", "kia",
-    "audi", "león", "leon", "ibiza", "golf", "clio", "corolla", "serie", "focus",
-  ];
-
-  const hasSearchIntent = searchKeywords.some((kw) => lower.includes(kw));
-  const hasPriceOrYear = maxPrice !== undefined || /\b20\d{2}\b/.test(lower);
-  const hasKPattern = /\d[\d.,]*\s*k\b/i.test(lower);
-  const hasModeloConocido = ["seat", "bmw", "audi", "león", "leon", "ibiza", "golf", "clio", "corolla", "focus", "toyota", "mercedes"].some((m) =>
-    lower.includes(m)
-  );
-
-  let isSearch = hasSearchIntent || hasPriceOrYear || hasKPattern || hasModeloConocido;
-  // If only price without keyword, still assume search (covers "menos de 3000" and "3000€")
-  if (hasPriceOrYear && !hasSearchIntent) isSearch = true;
-
-  // Anti-false-positive: year alone without coche context should not trigger
-  if (!hasSearchIntent && !maxPrice && !hasKPattern && /\b20\d{2}\b/.test(lower)) {
-    // Check if there's any car-related context; if not, false
-    isSearch = false;
-  }
-
-  return {
-    isSearch,
-    query: message,
-    maxPrice,
-    minPrice,
-  };
-}
+// Helpers are centralized in @/lib/chat-helpers for testability and to avoid Next.js route export validation
+import { detectVIN, detectPlate, detectCarSearch } from "@/lib/chat-helpers";
 
 async function searchBackend(query: string, maxPrice?: number, minPrice?: number) {
   const controller = new AbortController();
@@ -299,59 +173,164 @@ export async function POST(req: Request) {
       ? `${AUTOMISHO_SYSTEM_PROMPT}\n\n---\nTienes datos reales del sistema. Úsalos para responder al usuario. NO inventes datos.${contextData}\n\nSi hay resultados de coches, presenta 3-5 mejores en markdown con links. Si hay matrícula/VIN, ofrece las 3 opciones DGT/CarVertical/Carfax con links externos.`
       : AUTOMISHO_SYSTEM_PROMPT;
 
-    const result = streamText({
-      model: getChatModel(CHAT_MODEL),
-      system: systemPrompt,
-      messages: await convertToModelMessages(messages),
-      onFinish: async ({ text }) => {
-        if (conversationId && text) {
-          try {
-            await prisma.message.create({
-              data: { conversationId, role: "assistant", content: text },
-            });
+    // Helper: generate static markdown fallback when LLM fails but we have cars
+    const generateFallbackMarkdown = (cars: unknown[]): string => {
+      if (Array.isArray(cars) && cars.length > 0) {
+        const list = (cars as Record<string, unknown>[]).slice(0, 3)
+          .map((c, i) => {
+            const price = c.price ? `${(c.price as number).toLocaleString("es-ES")}€` : "Precio no disponible";
+            const year = (c.year as string | number) || "¿?";
+            const km = c.km ? `${(c.km as number).toLocaleString("es-ES")}km` : "¿km?";
+            const fuel = (c.fuel as string) || "";
+            const source = (c.source as string) || "demo";
+            const url = c.url ? ` — ${c.url}` : "";
+            return `${i + 1}. **${c.title}** — ${price} | ${year} | ${km} | ${fuel} | Fuente: ${source}${url}`;
+          })
+          .join("\n");
+        return `¡He encontrado ${cars.length} opciones para ti! (respuesta local — el asistente IA está temporalmente no disponible, pero aquí tienes los resultados):\n\n${list}\n\nHe mostrado las mejores 3 opciones según tu presupuesto. ¿Quieres que profundice en alguna? Podrás chatear con detalles completos cuando el servicio IA vuelva a estar disponible.`;
+      }
+      if (plate || vin) {
+        return `He detectado ${plate ? `matrícula **${plate}**` : ""}${plate && vin ? " y " : ""}${vin ? `VIN **${vin}**` : ""}. El asistente IA está temporalmente no disponible, pero puedes consultar:\n\n- **DGT oficial 8,67€** (tasa 4.1) en https://sede.dgt.gob.es/es/vehiculos/informe-de-vehiculo/\n- **CarVertical ~15€** en https://www.carvertical.com\n- **Carfax ~20€** en https://www.carfax.eu\n\nVuelve a intentar en unos segundos y te daré el análisis completo.`;
+      }
+      return "Lo siento, el asistente IA está temporalmente no disponible (timeout del proveedor). Por favor, intenta de nuevo en unos segundos. Si el problema persiste, refresca la página. Tus resultados de búsqueda seguirán disponibles arriba si había coches encontrados.";
+    };
 
-            const msgCount = await prisma.message.count({
-              where: { conversationId },
-            });
-            if (msgCount <= 2 && userText) {
-              const title = userText.slice(0, 80) + (userText.length > 80 ? "..." : "");
-              await prisma.conversation.update({
-                where: { id: conversationId },
-                data: { title },
+    // Attempt LLM stream with timeout + graceful fallback
+    let llmTimeout: ReturnType<typeof setTimeout> | null = null;
+    const abortController = new AbortController();
+    llmTimeout = setTimeout(() => {
+      console.warn("[chat] LLM timeout 10s — aborting stream for", conversationId);
+      try { abortController.abort(); } catch {}
+    }, 10000);
+
+    try {
+      const result = streamText({
+        model: getChatModel(CHAT_MODEL),
+        system: systemPrompt,
+        messages: await convertToModelMessages(messages),
+        abortSignal: abortController.signal as unknown as AbortSignal,
+        onFinish: async ({ text }) => {
+          if (llmTimeout) clearTimeout(llmTimeout);
+          if (conversationId && text) {
+            try {
+              await prisma.message.create({
+                data: { conversationId, role: "assistant", content: text },
               });
+
+              const msgCount = await prisma.message.count({
+                where: { conversationId },
+              });
+              if (msgCount <= 2 && userText) {
+                const title = userText.slice(0, 80) + (userText.length > 80 ? "..." : "");
+                await prisma.conversation.update({
+                  where: { id: conversationId },
+                  data: { title },
+                });
+              }
+            } catch (err) {
+              console.error("[chat] Failed to save message:", err);
             }
-          } catch (err) {
-            console.error("[chat] Failed to save message:", err);
           }
-        }
-      },
-    });
-
-    // Stream with optional data block for car cards
-    if (extraData) {
-      const uiStream = createUIMessageStream({
-        execute: async ({ writer }) => {
-          // Send data so MessageList can render car cards
-          (writer as unknown as { write: (c: unknown) => void }).write({
-            type: "data",
-            data: extraData,
-            transient: false,
-          });
-          writer.merge(toUIMessageStream({ stream: result.stream } as unknown as { stream: ReadableStream }));
         },
-        onFinish: async () => {},
       });
-      const response = createUIMessageStreamResponse({ stream: uiStream });
-      response.headers.set("x-automisho-cars", encodeURIComponent(JSON.stringify(extraData)));
-      return response;
-    }
 
-    return createUIMessageStreamResponse({
-      stream: toUIMessageStream({ stream: result.stream } as unknown as { stream: ReadableStream }),
-    });
+      // Stream with optional data block for car cards — ALWAYS send data first
+      if (extraData) {
+        const uiStream = createUIMessageStream({
+          execute: async ({ writer }) => {
+            // Send data so MessageList can render car cards even if LLM later fails
+            (writer as unknown as { write: (c: unknown) => void }).write({
+              type: "data",
+              data: extraData,
+              transient: false,
+            });
+            // Merge LLM stream — if it errors mid-flight, data is already sent
+            try {
+              writer.merge(toUIMessageStream({ stream: result.stream } as unknown as { stream: ReadableStream }));
+            } catch (mergeErr) {
+              console.error("[chat] merge error (LLM stream failed after data):", mergeErr, { model: CHAT_MODEL, conversationId, hasCars: extraDataCars.length > 0 });
+              // fallback text will be handled by client error overlay, but data already delivered
+            }
+          },
+          onFinish: async () => {
+            if (llmTimeout) clearTimeout(llmTimeout);
+          },
+        });
+        const response = createUIMessageStreamResponse({ stream: uiStream });
+        response.headers.set("x-automisho-cars", encodeURIComponent(JSON.stringify(extraData)));
+        return response;
+      }
+
+      return createUIMessageStreamResponse({
+        stream: toUIMessageStream({ stream: result.stream } as unknown as { stream: ReadableStream }),
+      });
+    } catch (llmErr: unknown) {
+      if (llmTimeout) clearTimeout(llmTimeout);
+      const errMsg = llmErr instanceof Error ? llmErr.message : String(llmErr);
+      const errStack = llmErr instanceof Error ? llmErr.stack : undefined;
+      console.error("[chat] LLM streamText failed — falling back to static markdown", {
+        message: errMsg,
+        stack: errStack,
+        model: CHAT_MODEL,
+        conversationId,
+        hasCars: extraDataCars.length > 0,
+        plate,
+        vin,
+      });
+
+      // Fallback: still send data block + static markdown so UI shows cards without error red
+      const fallbackText = generateFallbackMarkdown(extraDataCars);
+
+      // Persist fallback as assistant message so history is consistent
+      if (conversationId) {
+        try {
+          await prisma.message.create({
+            data: { conversationId, role: "assistant", content: fallbackText },
+          });
+          const msgCount = await prisma.message.count({ where: { conversationId } });
+          if (msgCount <= 2 && userText) {
+            const title = userText.slice(0, 80) + (userText.length > 80 ? "..." : "");
+            await prisma.conversation.update({ where: { id: conversationId }, data: { title } });
+          }
+        } catch (persistErr) {
+          console.error("[chat] Failed to persist fallback message:", persistErr);
+        }
+      }
+
+      if (extraData) {
+        const fallbackStream = createUIMessageStream({
+          execute: async ({ writer }) => {
+            (writer as unknown as { write: (c: unknown) => void }).write({
+              type: "data",
+              data: extraData,
+              transient: false,
+            });
+            const id = "fallback-" + Date.now();
+            (writer as unknown as { write: (c: unknown) => void }).write({ type: "text-start", id });
+            (writer as unknown as { write: (c: unknown) => void }).write({ type: "text-delta", id, delta: fallbackText });
+            (writer as unknown as { write: (c: unknown) => void }).write({ type: "text-end", id });
+          },
+        });
+        const response = createUIMessageStreamResponse({ stream: fallbackStream });
+        response.headers.set("x-automisho-cars", encodeURIComponent(JSON.stringify(extraData)));
+        return response;
+      }
+
+      // No cars: still return a stream with fallback text (200, not 500)
+      const textOnlyStream = createUIMessageStream({
+        execute: async ({ writer }) => {
+          const id = "fallback-" + Date.now();
+          (writer as unknown as { write: (c: unknown) => void }).write({ type: "text-start", id });
+          (writer as unknown as { write: (c: unknown) => void }).write({ type: "text-delta", id, delta: fallbackText });
+          (writer as unknown as { write: (c: unknown) => void }).write({ type: "text-end", id });
+        },
+      });
+      return createUIMessageStreamResponse({ stream: textOnlyStream });
+    }
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
-    console.error("[chat] Error:", message);
+    const stack = err instanceof Error ? err.stack : undefined;
+    console.error("[chat] Unhandled Error:", { message, stack, conversationId: (await (async () => { try { return "unknown"; } catch { return "unknown"; }})()) });
     return Response.json({ error: message }, { status: 500 });
   }
 }

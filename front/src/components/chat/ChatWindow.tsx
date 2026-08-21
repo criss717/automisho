@@ -48,6 +48,21 @@ export default function ChatWindow({ conversationId, initialMessages = [] }: Cha
     setInput("");
   };
 
+  const handleRetry = () => {
+    // Re-send last user message if available, otherwise just clear error by sending empty retry signal
+    const lastUser = [...messages].reverse().find((m) => m.role === "user");
+    const parts = (lastUser?.parts as unknown as { type: string; text?: string }[]) || [];
+    const text = parts
+      .filter((p) => p.type === "text" && typeof p.text === "string")
+      .map((p) => p.text as string)
+      .join("") || "";
+    if (text) {
+      sendMessage({ text }, { body: { conversationId } });
+    } else if (input.trim()) {
+      sendMessage({ text: input }, { body: { conversationId } });
+    }
+  };
+
   return (
     <div className="flex flex-col h-full min-h-0 overflow-hidden">
       <div className="flex-1 min-h-0 overflow-hidden flex flex-col">
@@ -55,8 +70,16 @@ export default function ChatWindow({ conversationId, initialMessages = [] }: Cha
       </div>
 
       {error && (
-        <div className="shrink-0 px-4 py-2 bg-red-500/10 border-t border-red-500/30 text-red-400 text-xs text-center">
-          Error al conectar con AutoMisho. Intenta de nuevo.
+        <div className="shrink-0 px-4 py-3 bg-amber-500/10 border-t border-amber-500/20 flex items-center justify-between gap-3">
+          <span className="text-amber-300 text-xs leading-snug">
+            El asistente IA tardó demasiado o no está disponible. Tus resultados (si había coches) ya están arriba.
+          </span>
+          <button
+            onClick={handleRetry}
+            className="shrink-0 px-3 py-1.5 rounded-full bg-mint-glow text-forest-depths text-xs font-medium hover:shadow-[0_0_10px_rgba(151,252,215,0.4)] transition-all"
+          >
+            Reintentar
+          </button>
         </div>
       )}
 
