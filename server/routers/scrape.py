@@ -73,7 +73,7 @@ CITY_COORDS = {
 
 def _client_kwargs(headers=None):
     h = headers or HEADERS
-    kwargs = {"headers": h, "follow_redirects": True, "timeout": 15}
+    kwargs = {"headers": h, "follow_redirects": True, "timeout": 6}
     try:
         import h2  # noqa: F401
         kwargs["http2"] = True
@@ -105,13 +105,22 @@ def _parse_price(text: str) -> int | None:
     return int(digits) if digits else None
 
 
+def _clean_keywords(query: str) -> str:
+    """Extract known make/model or return empty string for generic price queries."""
+    if not query:
+        return ""
+    words = re.sub(r"[^\w\s]", " ", query.lower()).split()
+    matched = [w for w in words if w in KNOWN_MAKES and w not in NOISE]
+    return " ".join(matched)
+
+
 @router.post("", response_model=ScrapeResponse)
 async def scrape_cars(req: ScrapeRequest):
     """Scrape car listings from the selected source."""
-    # Clamp max_results 1..12
-    req.max_results = max(1, min(req.max_results, 12))
+    # Clamp max_results 1..16
+    req.max_results = max(1, min(req.max_results, 16))
 
-    if req.source == "auto":
+    if req.source in ("auto", "deep"):
         tasks = [
             _scrape_with_retry(_scrape_autoscout24, req),
             _scrape_with_retry(_scrape_cochesnet, req),
@@ -125,61 +134,75 @@ async def scrape_cars(req: ScrapeRequest):
                 flat.extend(r)
             elif isinstance(r, Exception):
                 logger.error(f"[scrape] source failed: {r}")
-            else:
-                logger.warning(f"[scrape] unexpected result type: {type(r)}")
-        # Deduplicate by url
+
+        # Deduplicate by url/title
         seen: set[str] = set()
         deduped: list[CarResult] = []
         for c in flat:
-            if c.url and c.url not in seen:
-                seen.add(c.url)
+            key = c.url or c.title
+            if key and key not in seen:
+                seen.add(key)
                 deduped.append(c)
-            elif not c.url:
-                deduped.append(c)
-        # Ranking: score desc, then price asc
-        deduped.sort(key=lambda c: (-(getattr(c, "score", 0) or 0) if hasattr(c, "score") else 0, c.price or 999999))
 
-        # Fallback demo: if deduped empty and price low, generate 3 demo cards so chat always has cards
-        if not deduped and req.max_price is not None and req.max_price <= 5000:
-            logger.warning("fallback demo triggered")
-            deduped = [
-                CarResult(
-                    title="Demo: SEAT Ibiza 1.4 2015",
-                    price=2800,
-                    year=2015,
-                    km=120000,
-                    fuel="Gasolina",
-                    url="https://www.milanuncios.com/demo-ibiza",
-                    image_url="/assets/hero_logo.svg",
-                    source="demo",
-                ),
-                CarResult(
-                    title="Demo: Renault Clio 1.2 2016",
-                    price=3200,
-                    year=2016,
-                    km=95000,
-                    fuel="Gasolina",
-                    url="https://www.milanuncios.com/demo-clio",
-                    image_url="https://via.placeholder.com/600x400?text=Demo+Clio",
-                    source="demo",
-                ),
-                CarResult(
-                    title="Demo: Peugeot 208 1.0 2014",
-                    price=2900,
-                    year=2014,
-                    km=110000,
-                    fuel="Gasolina",
-                    url="https://www.milanuncios.com/demo-208",
-                    image_url="https://via.placeholder.com/600x400?text=Demo+208",
-                    source="demo",
-                ),
-            ]
+        # Fair round-robin aggregation across sources
+        by_source: dict[str, list[CarResult]] = {}
+        for c in deduped:
+            src = c.source or "other"
+            by_source.setdefault(src, []).append(c)
 
-        sliced = deduped[: req.max_results]
-        logger.info(f"[scrape] auto aggregated {len(sliced)}/{len(flat)} from 4 sources (deduped {len(deduped)})")
+        balanced: list[CarResult] = []
+        max_len = max((len(lst) for lst in by_source.values()), default=0)
+        for i in range(max_len):
+            for src_list in by_source.values():
+                if i < len(src_list):
+                    balanced.append(src_list[i])
+
+        sliced = balanced[: req.max_results]
+        logger.info(f"[scrape] {req.source} aggregated {len(sliced)}/{len(flat)} from {len(by_source)} sources (deduped {len(deduped)})")
         return ScrapeResponse(
             results=sliced,
             source=req.source,
+            query=req.query,
+            total=len(sliced),
+        )
+    elif req.source == "fast":
+        # Fast mode: AutoScout24 + Coches.net only (~2s response time)
+        tasks = [
+            _scrape_with_retry(_scrape_autoscout24, req),
+            _scrape_with_retry(_scrape_cochesnet, req),
+        ]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        flat: list[CarResult] = []
+        for r in results:
+            if isinstance(r, list):
+                flat.extend(r)
+
+        seen: set[str] = set()
+        deduped: list[CarResult] = []
+        for c in flat:
+            key = c.url or c.title
+            if key and key not in seen:
+                seen.add(key)
+                deduped.append(c)
+
+        # Fair round-robin
+        by_source: dict[str, list[CarResult]] = {}
+        for c in deduped:
+            src = c.source or "other"
+            by_source.setdefault(src, []).append(c)
+
+        balanced: list[CarResult] = []
+        max_len = max((len(lst) for lst in by_source.values()), default=0)
+        for i in range(max_len):
+            for src_list in by_source.values():
+                if i < len(src_list):
+                    balanced.append(src_list[i])
+
+        sliced = balanced[: req.max_results]
+        logger.info(f"[scrape] fast aggregated {len(sliced)} from {len(by_source)} sources")
+        return ScrapeResponse(
+            results=sliced,
+            source="fast",
             query=req.query,
             total=len(sliced),
         )
@@ -189,23 +212,6 @@ async def scrape_cars(req: ScrapeRequest):
             logger.error(f"[scrape] single source failed: {single}")
             single = []
         sliced = single[: req.max_results] if isinstance(single, list) else []
-        # also demo fallback for single source case if needed? follow spec for auto only; but add for completeness if auto empty low price already handled.
-        if not sliced and req.max_price is not None and req.max_price <= 5000 and req.source in ("auto", "milanuncios"):
-            # if single source also empty, reuse same demo to avoid empty chat
-            if not isinstance(single, list) or len(single) == 0:
-                logger.warning("fallback demo triggered (single source)")
-                sliced = [
-                    CarResult(
-                        title="Demo: SEAT Ibiza 1.4 2015",
-                        price=2800,
-                        year=2015,
-                        km=120000,
-                        fuel="Gasolina",
-                        url="https://www.milanuncios.com/demo-ibiza",
-                        image_url="/assets/hero_logo.svg",
-                        source="demo",
-                    ),
-                ][: req.max_results]
         return ScrapeResponse(
             results=sliced,
             source=req.source,
@@ -310,11 +316,25 @@ async def _scrape_autoscout24(req: ScrapeRequest) -> list[CarResult]:
             price_el = item.select_one("[data-testid='regular-price']")
             price = _parse_price(price_el.get_text(strip=True)) if price_el else None
 
-            link_el = item.select_one("a[class*='ListItemTitle_anchor']")
-            link = ""
-            if link_el and link_el.get("href"):
-                href = link_el["href"]
-                link = f"https://www.autoscout24.es{href}" if not href.startswith("http") else href
+            guid = item.get("data-guid") or item.get("id")
+            make = item.get("data-make", "")
+            model = item.get("data-model", "")
+
+            # 1. Build direct ad link from AutoScout24's GUID
+            if guid:
+                if make and model:
+                    link = f"https://www.autoscout24.es/anuncios/{make}-{model}-{guid}"
+                else:
+                    link = f"https://www.autoscout24.es/anuncios/-{guid}"
+            else:
+                link_el = item.select_one("a[href*='/anuncios/'], a[href*='/angebote/'], a[data-testid='list-item-link']")
+                link = ""
+                if link_el and link_el.get("href"):
+                    href = link_el["href"]
+                    if not href.startswith("/lst") and "/lst?" not in href:
+                        link = f"https://www.autoscout24.es{href}" if not href.startswith("http") else href
+                if not link or link == "https://www.autoscout24.es" or link == "https://www.autoscout24.es/":
+                    link = f"https://www.autoscout24.es/lst?keywords={quote(title)}&priceto={price or ''}"
 
             # image_url
             img_el = item.select_one("img")
@@ -422,7 +442,7 @@ async def _scrape_cochesnet(req: ScrapeRequest) -> list[CarResult]:
     results: list[CarResult] = []
     limit = min(len(items), req.max_results or 12)
     for item in items[:limit]:
-        title_el = item.select_one(".mt-CardAd-infoHeaderTitleLink")
+        title_el = item.select_one(".mt-CardAd-infoHeaderTitleLink, a[href*='-covo.aspx'], a[data-testid='card-ad-link'], a")
         title = title_el.get_text(strip=True) if title_el else "Sin título"
 
         price_el = item.select_one("[data-testid='card-adPrice-price']")
@@ -435,6 +455,8 @@ async def _scrape_cochesnet(req: ScrapeRequest) -> list[CarResult]:
         if title_el and title_el.get("href"):
             href = title_el["href"]
             link = f"https://www.coches.net{href}" if not href.startswith("http") else href
+        if not link or link == "https://www.coches.net" or link == "https://www.coches.net/":
+            link = f"https://www.coches.net/segunda-mano/?Keywords={quote(title)}&MaxPrice={price or ''}"
 
         img_el = item.select_one("img")
         image_url = None
@@ -470,8 +492,9 @@ async def _scrape_wallapop(req: ScrapeRequest) -> list[CarResult]:
 
     lat, lon = _city_coords(req.query)
 
+    clean_kw = _clean_keywords(req.query)
     params = {
-        "keywords": req.query,
+        "keywords": clean_kw if clean_kw else "",
         "category_ids": "100",  # Cars
         "latitude": str(lat),
         "longitude": str(lon),
@@ -709,6 +732,8 @@ async def _scrape_milanuncios(req: ScrapeRequest) -> list[CarResult]:
                     link = href
                 else:
                     link = f"https://www.milanuncios.com/{href.strip('/')}"
+            if not link or link == "https://www.milanuncios.com" or link == "https://www.milanuncios.com/":
+                link = f"https://www.milanuncios.com/coches-de-segunda-mano/?keywords={quote(title)}&precio-hasta={price or ''}"
 
             img_el = item.select_one("img")
             image_url = None

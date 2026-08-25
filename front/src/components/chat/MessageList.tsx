@@ -14,6 +14,7 @@ import type { CarResult } from "@/types";
 interface MessageListProps {
   messages: UIMessage[];
   isLoading: boolean;
+  onAskCopilot?: (question: string) => void;
 }
 
 function getMessageText(message: UIMessage): string {
@@ -23,7 +24,7 @@ function getMessageText(message: UIMessage): string {
     .join("");
 }
 
-export default function MessageList({ messages, isLoading }: MessageListProps) {
+export default function MessageList({ messages, isLoading, onAskCopilot }: MessageListProps) {
   const bottomRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -32,30 +33,31 @@ export default function MessageList({ messages, isLoading }: MessageListProps) {
 
   return (
     <div className="flex-1 overflow-y-auto min-h-0">
-      <div className="max-w-3xl mx-auto px-6 py-8 space-y-5">
+      <div className="max-w-3xl mx-auto px-4 md:px-6 py-6 space-y-4">
         {messages.length === 0 && !isLoading && (
-          <div className="flex flex-col items-center justify-center pt-24 text-center">
-            <div className="w-16 h-16 rounded-full bg-mint-glow/10 border border-mint-glow/20 flex items-center justify-center mb-5">
+          <div className="flex flex-col items-center justify-center pt-16 pb-8 text-center">
+            <div className="w-16 h-16 rounded-full bg-mint-glow/10 border border-mint-glow/20 flex items-center justify-center mb-4">
               <img src="/assets/hero_logo.svg" alt="AutoMisho" className="w-9 h-9 object-contain" />
             </div>
             <h2 className="text-xl text-pure-light font-light mb-2">
               Hola, soy AutoMisho
             </h2>
-            <p className="text-sm text-mist-gray/60 max-w-xs mb-8">
-              Tu copiloto IA para comprar coches de segunda mano. Cuéntame qué buscas.
+            <p className="text-xs md:text-sm text-mist-gray/70 max-w-sm mb-6">
+              Tu copiloto IA para comprar coches de segunda mano en España. Busca en múltiples portales y consulta informes oficiales.
             </p>
-            <div className="flex flex-wrap justify-center gap-3">
+            <div className="flex flex-wrap justify-center gap-2">
               {[
+                "5 coches de menos de 3000 euros",
                 "SUV familiar menos de 15.000€",
-                "Eléctrico para ciudad",
-                "Fiable para 20.000km/año",
+                "Eléctrico o híbrido para ciudad",
               ].map((suggestion) => (
-                <span
+                <button
                   key={suggestion}
-                  className="text-xs px-4 py-2 rounded-full border border-midnight-tide text-mist-gray/60 hover:text-mint-glow hover:border-mint-glow/30 cursor-pointer transition-all"
+                  onClick={() => onAskCopilot?.(suggestion)}
+                  className="text-xs px-3.5 py-1.5 rounded-full border border-midnight-tide text-mist-gray/80 hover:text-mint-glow hover:border-mint-glow/30 hover:bg-white/5 cursor-pointer transition-all"
                 >
                   {suggestion}
-                </span>
+                </button>
               ))}
             </div>
           </div>
@@ -66,13 +68,17 @@ export default function MessageList({ messages, isLoading }: MessageListProps) {
             <div key={msg.id} className="space-y-3">
               {/* Render text bubble if any text */}
               {getMessageText(msg) && (
-                <MessageBubble role={msg.role as "user" | "assistant"} content={getMessageText(msg)} />
+                <MessageBubble
+                  role={msg.role as "user" | "assistant"}
+                  content={getMessageText(msg)}
+                  onAskCopilot={onAskCopilot}
+                />
               )}
 
               {/* Render data/tool parts for assistant messages */}
               {msg.parts.map((part: unknown, idx: number) => {
                 const p = part as Record<string, unknown>;
-                // data block with cars
+                // data block with cars (rendered in compact preview in chat)
                 if (p.type === "data" && (p.data as Record<string, unknown>)?.cars) {
                   const cars = (p.data as { cars: CarResult[] }).cars;
                   return (
@@ -80,10 +86,23 @@ export default function MessageList({ messages, isLoading }: MessageListProps) {
                       key={`${msg.id}-cars-${idx}`}
                       initial={{ opacity: 0, y: 8 }}
                       animate={{ opacity: 1, y: 0 }}
-                      className="grid gap-3"
+                      className="grid gap-2 max-w-md"
                     >
-                      {cars.map((c) => (
-                        <CarResultCard key={c.url || c.title} car={c} />
+                      <div className="flex items-center justify-between px-1">
+                        <span className="text-[11px] uppercase tracking-wider text-mint-glow font-medium">
+                          🚗 {cars.length} opciones encontradas
+                        </span>
+                        <span className="text-[11px] text-mist-gray/50">
+                          (Ver panel derecho para comparativa completa)
+                        </span>
+                      </div>
+                      {cars.slice(0, 3).map((c, cIdx) => (
+                        <CarResultCard
+                          key={c.url || `${c.title}-${cIdx}`}
+                          car={c}
+                          variant="compact"
+                          onAskCopilot={onAskCopilot}
+                        />
                       ))}
                     </motion.div>
                   );
@@ -101,7 +120,7 @@ export default function MessageList({ messages, isLoading }: MessageListProps) {
                       key={`${msg.id}-dgt-${idx}`}
                       initial={{ opacity: 0, y: 8 }}
                       animate={{ opacity: 1, y: 0 }}
-                      className="grid gap-3 md:grid-cols-1"
+                      className="grid gap-3 max-w-lg"
                     >
                       <DGTGuideCard plate={opts.plate ?? undefined} />
                       <CarVerticalCard vin={opts.vin ?? undefined} />
@@ -113,7 +132,14 @@ export default function MessageList({ messages, isLoading }: MessageListProps) {
                 if (p.type === "tool-invocation" && (p as Record<string, unknown>).toolName === "searchCars") {
                   const result = (p as Record<string, unknown>).result as CarResult | undefined;
                   if (result) {
-                    return <CarResultCard key={`${msg.id}-tool-${idx}`} car={result} />;
+                    return (
+                      <CarResultCard
+                        key={`${msg.id}-tool-${idx}`}
+                        car={result}
+                        variant="compact"
+                        onAskCopilot={onAskCopilot}
+                      />
+                    );
                   }
                 }
                 return null;
@@ -124,9 +150,9 @@ export default function MessageList({ messages, isLoading }: MessageListProps) {
 
         {isLoading && messages.length > 0 && messages[messages.length - 1].role === "user" && (
           <div className="flex justify-start">
-            <div className="bg-shadow-teal/60 rounded-2xl rounded-bl-sm px-5 py-3 flex items-center gap-2">
-              <NutSpinner size={16} />
-              <span className="text-sm text-mist-gray/60">Pensando...</span>
+            <div className="bg-shadow-teal/40 border border-white/5 rounded-2xl rounded-bl-sm px-4 py-2.5 flex items-center gap-2 shadow-sm">
+              <NutSpinner size={16} className="text-mint-glow" />
+              <span className="text-xs text-mist-gray/80">AutoMisho está analizando...</span>
             </div>
           </div>
         )}

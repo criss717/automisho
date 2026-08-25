@@ -8,6 +8,7 @@ import { DashboardBlobs, DashboardHeader, DashboardStaggerGrid } from "@/compone
 import DashboardSuccessRefresh from "@/components/dashboard/DashboardSuccessRefresh";
 import DgtHistoryCards from "@/components/dashboard/DgtHistoryCards";
 import { Suspense } from "react";
+import Link from "next/link";
 
 export default async function DashboardPage() {
   const session = await auth();
@@ -36,16 +37,35 @@ export default async function DashboardPage() {
   const currentPlan = (dbUser?.plan as "free" | "premium" | "pro") || (session.user.plan as "free" | "premium" | "pro") || "free";
 
   return (
-    <div className="relative h-full overflow-y-auto overflow-x-hidden">
+    <div className="relative h-full overflow-y-auto overflow-x-hidden bg-forest-depths w-full">
       <DashboardBlobs />
-      <div className="relative max-w-6xl mx-auto px-6 md:px-8 py-8">
+      <div className="relative w-full max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-10 space-y-8">
         <Suspense fallback={null}>
           <DashboardSuccessRefresh />
         </Suspense>
+
         <DashboardHeader>
-          <h1 className="text-2xl text-pure-light font-light mb-8">
-            Dashboard
-          </h1>
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-6 border-b border-midnight-tide">
+            <div>
+              <span className="text-xs uppercase tracking-widest text-mint-glow font-medium mb-1 block">
+                Área Personal
+              </span>
+              <h1 className="text-3xl sm:text-4xl text-pure-light font-teodor tracking-tight">
+                Mi Cuenta & Control
+              </h1>
+              <p className="text-xs sm:text-sm text-mist-gray/70 mt-1 max-w-md">
+                Gestiona tu suscripción, revisa cuotas de uso y accede al portal de consulta de matrículas DGT.
+              </p>
+            </div>
+
+            <Link
+              href="/chat"
+              className="inline-flex items-center gap-2 px-5 py-2.5 rounded-full bg-mint-glow text-forest-depths font-medium text-xs sm:text-sm hover:shadow-[0_0_15px_rgba(151,252,215,0.4)] transition-all self-start sm:self-auto"
+            >
+              <span>💬 Abrir Copilot Workspace</span>
+              <span>→</span>
+            </Link>
+          </div>
         </DashboardHeader>
 
         <DashboardStaggerGrid>
@@ -60,7 +80,9 @@ export default async function DashboardPage() {
           <SettingsPanel user={session.user} />
         </DashboardStaggerGrid>
 
-        <DgtHistoryCards />
+        <div className="pt-4">
+          <DgtHistoryCards />
+        </div>
       </div>
     </div>
   );

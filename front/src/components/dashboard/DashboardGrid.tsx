@@ -34,13 +34,17 @@ export function DashboardStaggerGrid({ children }: { children: ReactNode[] | Rea
   const items = Array.isArray(children) ? children : [children];
   return (
     <motion.div
-      className="grid grid-cols-1 md:grid-cols-2 gap-8"
+      className="grid grid-cols-1 md:grid-cols-2 gap-6"
       initial="hidden"
       animate="show"
       variants={containerVariants}
     >
       {items.map((child, i) => (
-        <motion.div key={i} variants={itemVariants} className={i === items.length - 1 ? "md:col-span-2" : ""}>
+        <motion.div
+          key={i}
+          variants={itemVariants}
+          className={items.length % 2 !== 0 && i === items.length - 1 ? "md:col-span-2" : ""}
+        >
           {child}
         </motion.div>
       ))}

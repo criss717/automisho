@@ -4,10 +4,11 @@ import { useRef } from "react";
 import { motion, useInView } from "framer-motion";
 
 const sources = [
-  { name: "AutoScout24" },
-  { name: "coches.net" },
-  { name: "carVertical" },
-  { name: "Milanuncios" },
+  { name: "AutoScout24", tag: "Catálogo Europeo", icon: "🚗" },
+  { name: "coches.net", tag: "Líder España", icon: "🇪🇸" },
+  { name: "carVertical", tag: "Historial VIN", icon: "🔍" },
+  { name: "Milanuncios", tag: "Particulares", icon: "⚡" },
+  { name: "Wallapop", tag: "Segunda Mano", icon: "💬" },
 ];
 
 export default function DataSources() {
@@ -15,40 +16,42 @@ export default function DataSources() {
   const isInView = useInView(sectionRef, { once: true, margin: "-50px" });
 
   return (
-    <section ref={sectionRef} style={{ maxWidth: "1200px", margin: "0 auto", padding: "48px 2rem", textAlign: "center" }}>
+    <section ref={sectionRef} className="w-full max-w-6xl mx-auto px-6 py-16 text-center">
       <motion.div
-        initial={{ opacity: 0 }}
-        animate={isInView ? { opacity: 1 } : {}}
-        transition={{ duration: 0.6 }}
+        initial={{ opacity: 0, y: 16 }}
+        animate={isInView ? { opacity: 1, y: 0 } : {}}
+        transition={{ duration: 0.5 }}
       >
-        <p style={{ color: "#97fcd7", fontSize: "14px", fontWeight: 500, textTransform: "uppercase", letterSpacing: "0.1em", marginBottom: "24px" }}>
-          Fuentes de datos
+        <p className="text-xs uppercase tracking-widest text-mint-glow font-medium mb-3">
+          Fuentes de datos conectadas
         </p>
 
-        <div style={{ display: "flex", flexWrap: "wrap", justifyContent: "center", gap: "12px", marginBottom: "24px" }}>
+        <h3 className="text-2xl sm:text-3xl text-pure-light font-teodor mb-6">
+          Escaneo simultáneo de los principales portales de España
+        </h3>
+
+        <div className="flex flex-wrap justify-center gap-3 mb-6">
           {sources.map((source, index) => (
             <motion.div
               key={source.name}
-              initial={{ opacity: 0, y: 20 }}
+              initial={{ opacity: 0, y: 14 }}
               animate={isInView ? { opacity: 1, y: 0 } : {}}
-              transition={{ duration: 0.4, delay: index * 0.1 }}
-              className="float"
-              style={{ animationDelay: `${index * -2}s` }}
+              transition={{ duration: 0.35, delay: index * 0.08 }}
+              className="glass-card py-2.5 px-5 rounded-full border border-midnight-tide hover:border-mint-glow/40 hover:bg-white/5 transition-all flex items-center gap-2.5 group cursor-default shadow-sm"
             >
-              <div style={{
-                padding: "10px 20px",
-                borderRadius: "60px",
-                border: "1px solid #0f3933",
-                background: "rgba(35,82,76,0.3)",
-              }}>
-                <span style={{ color: "#b0c5c1", fontSize: "16px" }}>{source.name}</span>
-              </div>
+              <span className="text-base">{source.icon}</span>
+              <span className="text-sm font-medium text-pure-light group-hover:text-mint-glow transition-colors">
+                {source.name}
+              </span>
+              <span className="text-[10px] uppercase tracking-wider text-mist-gray/60 px-2 py-0.5 rounded-full bg-forest-depths/80 border border-white/5">
+                {source.tag}
+              </span>
             </motion.div>
           ))}
         </div>
 
-        <p style={{ color: "#b0c5c1", fontSize: "14px", maxWidth: "500px", margin: "0 auto" }}>
-          Y muchas más fuentes en camino. Siempre buscando las mejores oportunidades para ti.
+        <p className="text-xs sm:text-sm text-mist-gray/70 max-w-lg mx-auto leading-relaxed">
+          AutoMisho recopila, filtra anuncios duplicados y compara precios en tiempo real para encontrar las mejores oportunidades para ti.
         </p>
       </motion.div>
     </section>

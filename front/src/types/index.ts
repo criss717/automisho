@@ -13,4 +13,7 @@ export interface CarResult {
   image_url?: string | null;
   fuel?: string | null;
   currency?: string;
+  pros?: string[];
+  cons?: string[];
 }
+

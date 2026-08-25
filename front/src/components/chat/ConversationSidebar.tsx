@@ -35,15 +35,30 @@ export default function ConversationSidebar({ currentId }: ConversationSidebarPr
 
   useEffect(() => {
     fetchConversations();
-  }, []);
-
-  // Refresh when currentId changes (new conversation created)
-  useEffect(() => {
-    fetchConversations();
+    const handleUpdate = () => {
+      fetchConversations();
+    };
+    window.addEventListener("automisho:conversation_updated", handleUpdate);
+    return () => window.removeEventListener("automisho:conversation_updated", handleUpdate);
   }, [currentId]);
 
-  const handleNew = () => {
-    router.push("/chat");
+  const handleNew = async () => {
+    try {
+      const res = await fetch("/api/conversations", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+      });
+      if (res.ok) {
+        const conv = await res.json();
+        router.push(`/chat/${conv.id}`);
+      } else if (res.status === 403) {
+        const data = await res.json();
+        alert(data.message || "Límite de conversaciones alcanzado");
+      }
+    } catch (err) {
+      console.error("Failed to create conversation:", err);
+    }
   };
 
   const handleDelete = async (id: string, e: React.MouseEvent) => {

@@ -112,3 +112,108 @@ export function detectCarSearch(message: string): {
     minPrice,
   };
 }
+
+import type { CarResult } from "@/types";
+
+export function enrichCarResult(car: Record<string, unknown>, requestedMaxPrice?: number): CarResult {
+  const price = typeof car.price === "number" ? car.price : (parseInt(String(car.price || "0").replace(/[^\d]/g, ""), 10) || 0);
+  const year = car.year ? (typeof car.year === "number" ? car.year : parseInt(String(car.year), 10) || null) : null;
+  const km = car.km ? (typeof car.km === "number" ? car.km : parseInt(String(car.km).replace(/[^\d]/g, ""), 10) || null) : null;
+  const title = String(car.title || "Vehículo sin título");
+  const fuel = car.fuel ? String(car.fuel) : null;
+  const source = String(car.source || "web");
+  const url = car.url ? String(car.url) : undefined;
+  const image_url = (car.image_url as string | null) || (car.image as string | null) || null;
+  const location = car.location ? String(car.location) : null;
+
+  let score = 82;
+  const pros: string[] = [];
+  const cons: string[] = [];
+
+  if (requestedMaxPrice && price > 0 && price <= requestedMaxPrice) {
+    score += 5;
+    pros.push(`Dentro de tu presupuesto (< ${requestedMaxPrice.toLocaleString("es-ES")}€)`);
+  } else if (price > 0) {
+    pros.push(`Precio competitivo en el mercado actual`);
+  }
+
+  if (year && year >= 2018) {
+    score += 6;
+    pros.push(`Año reciente (${year}) con etiqueta medioambiental C`);
+  } else if (year && year >= 2014) {
+    score += 3;
+    pros.push(`Modelo consolidado (${year})`);
+  } else if (year && year < 2010) {
+    score -= 4;
+    cons.push(`Modelo veterano (${year}) — comprobar emisiones`);
+  }
+
+  if (km && km < 80000) {
+    score += 5;
+    pros.push(`Bajo kilometraje (${km.toLocaleString("es-ES")} km)`);
+  } else if (km && km > 160000) {
+    score -= 4;
+    cons.push(`Kilometraje alto (${km.toLocaleString("es-ES")} km) — verificar correa y embrague`);
+  } else if (km) {
+    pros.push(`Kilometraje equilibrado (${km.toLocaleString("es-ES")} km)`);
+  }
+
+  if (fuel) {
+    const fLower = fuel.toLowerCase();
+    if (fLower.includes("diésel") || fLower.includes("diesel")) {
+      pros.push("Motor diésel eficiente en trayectos largos");
+    } else if (fLower.includes("gasolina")) {
+      pros.push("Motor gasolina de mantenimiento sencillo");
+    } else if (fLower.includes("híbrido") || fLower.includes("hibrido") || fLower.includes("eco")) {
+      pros.push("Propulsión híbrida con distintivo ECO");
+    }
+  }
+
+  if (cons.length === 0) {
+    cons.push("Solicitar informe DGT y verificar libro de revisiones");
+  }
+
+  if (pros.length === 0) {
+    pros.push("Excelente relación calidad/precio según análisis IA");
+    pros.push("Disponibilidad con anuncio activo");
+  }
+
+  score = Math.min(98, Math.max(65, score));
+
+  return {
+    title,
+    price,
+    year,
+    km,
+    fuel,
+    location,
+    source,
+    url,
+    image_url,
+    score,
+    pros: pros.slice(0, 3),
+    cons: cons.slice(0, 2),
+    alerts: cons.length > 1 ? 1 : 0,
+  };
+}
+
+export function extractCarsFromMessageContent(content: string): CarResult[] {
+  if (!content) return [];
+  const match = content.match(/<!--AUTOMISHO_CARS_DATA:([\s\S]*?)-->/);
+  if (match && match[1]) {
+    try {
+      const parsed = JSON.parse(match[1]);
+      if (Array.isArray(parsed)) return parsed as CarResult[];
+    } catch {
+      // ignore
+    }
+  }
+  return [];
+}
+
+export function cleanMessageContent(content: string): string {
+  if (!content) return "";
+  return content.replace(/<!--AUTOMISHO_CARS_DATA:[\s\S]*?-->/g, "").trim();
+}
+
+

@@ -23,13 +23,13 @@ const plans = [
     name: "Premium",
     price: "€4.99",
     period: "/mes",
-    description: "Para compradores serios",
+    description: "Para compradores particulares exigentes",
     features: [
       "Búsquedas ilimitadas",
-      "Todas las fuentes de datos",
-      "2 informes carVertical/mes",
+      "Todas las fuentes de datos (AutoScout24, Coches.net, Wallapop, Milanuncios)",
+      "2 consultas de informe oficial DGT/mes",
       "Alertas de nuevos listings",
-      "Comparación avanzada",
+      "Comparación avanzada de pros/contras con IA",
       "Soporte prioritario",
     ],
     cta: "Suscribirse",
@@ -41,12 +41,12 @@ const plans = [
     period: "/mes",
     description: "Para profesionales y concesionarios",
     features: [
-      "Todo de Premium",
-      "Informes ilimitados",
-      "Análisis predictivo de mercado",
-      "API de acceso",
-      "Exportación de informes PDF",
-      "Acceso anticipado a funciones",
+      "Todo lo de Premium",
+      "Consultas DGT ilimitadas",
+      "Análisis predictivo de mercado y depreciación",
+      "API de acceso directo",
+      "Exportación de informes PDF personalizados",
+      "Acceso anticipado a nuevas funciones",
     ],
     cta: "Contactar",
     highlighted: false,
@@ -81,104 +81,109 @@ export default function Pricing() {
     <section
       ref={sectionRef}
       id="pricing"
-      className="section relative"
+      className="section relative py-20"
     >
       {/* Background accent */}
       <div className="absolute inset-0 pointer-events-none">
         <div className="absolute top-1/3 right-0 w-[400px] h-[400px] bg-shadow-teal/15 rounded-full blur-[100px]" />
       </div>
 
-      {/* Section Header */}
+      {/* Section Header with generous margin to avoid any overlap */}
       <motion.div
-        initial={{ opacity: 0, y: 30 }}
+        initial={{ opacity: 0, y: 24 }}
         animate={isInView ? { opacity: 1, y: 0 } : {}}
-        transition={{ duration: 0.8 }}
-        className="section-header section-title--center relative z-10"
+        transition={{ duration: 0.6 }}
+        className="text-center relative z-10 mb-16 space-y-2"
       >
-        <p className="section-eyebrow text-center">Precios</p>
-        <h2 className="section-title text-center mx-auto">
+        <p className="text-xs uppercase tracking-widest text-mint-glow font-medium">
+          Planes y Tarifas
+        </p>
+        <h2 className="text-3xl sm:text-4xl md:text-5xl text-pure-light font-teodor tracking-tight">
           Elige tu plan
         </h2>
+        <p className="text-xs sm:text-sm text-mist-gray/70 max-w-md mx-auto">
+          Prueba gratis o desbloquea búsquedas ilimitadas e informes oficiales de la DGT.
+        </p>
       </motion.div>
 
-      {/* Pricing Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6 relative z-10">
+      {/* Pricing Cards Grid */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-8 relative z-10 max-w-6xl mx-auto items-stretch">
         {plans.map((plan, index) => (
           <motion.div
             key={plan.name}
-            initial={{ opacity: 0, y: 30 }}
+            initial={{ opacity: 0, y: 24 }}
             animate={isInView ? { opacity: 1, y: 0 } : {}}
-            transition={{ duration: 0.5, delay: index * 0.15 }}
-            className={`relative ${
-              plan.highlighted ? "md:-mt-4 md:mb-[-16px]" : ""
-            }`}
+            transition={{ duration: 0.5, delay: index * 0.12 }}
+            className="relative flex flex-col"
           >
             <div
-              className={`h-full flex flex-col ${
+              className={`h-full flex flex-col justify-between p-8 rounded-3xl transition-all relative ${
                 plan.highlighted
-                  ? "card-glow border-mint-glow/40"
-                  : "card"
+                  ? "glass-card border-mint-glow/50 shadow-[0_0_35px_rgba(151,252,215,0.15)] ring-1 ring-mint-glow/30"
+                  : "glass-card border-white/8 hover:border-white/20"
               }`}
             >
               {plan.highlighted && (
-                <div className="absolute -top-3 left-1/2 -translate-x-1/2">
-                  <span className="tag bg-mint-glow text-forest-depths border-mint-glow font-inter font-normal">
-                    Popular
+                <div className="absolute -top-3.5 left-1/2 -translate-x-1/2">
+                  <span className="px-3.5 py-1 rounded-full text-[11px] font-bold uppercase tracking-wider bg-mint-glow text-forest-depths shadow-md">
+                    Más Popular
                   </span>
                 </div>
               )}
 
               {/* Plan Header */}
-              <div className="mb-6">
-                <h3 className="text-subheading text-pure-light font-teodor mb-2">
+              <div className="mb-6 pt-1">
+                <h3 className="text-xl text-pure-light font-teodor mb-1">
                   {plan.name}
                 </h3>
-                <p className="text-caption text-mist-gray mb-4">
+                <p className="text-xs text-mist-gray/70 mb-4 min-h-[32px]">
                   {plan.description}
                 </p>
-                <div className="flex items-baseline gap-1 flex-wrap">
-                  <span className="text-[2.2rem] md:text-[2.8rem] leading-none text-pure-light font-teodor tracking-tight">
+                <div className="flex items-baseline gap-1.5 flex-wrap">
+                  <span className="text-4xl sm:text-5xl leading-none text-pure-light font-teodor tracking-tight">
                     {plan.price}
                   </span>
-                  <span className="text-body-sm text-mist-gray">
+                  <span className="text-xs text-mist-gray/70 font-medium">
                     {plan.period}
                   </span>
                 </div>
               </div>
 
-              {/* Features */}
-              <ul className="flex-1 space-y-3 mb-8">
+              {/* Features List */}
+              <ul className="flex-1 space-y-3 mb-8 border-t border-white/5 pt-6">
                 {plan.features.map((feature) => (
                   <li
                     key={feature}
-                    className="flex items-start gap-2 text-body-sm text-mist-gray"
+                    className="flex items-start gap-2.5 text-xs sm:text-sm text-mist-gray/90 leading-relaxed"
                   >
                     <svg
                       width="16"
                       height="16"
                       viewBox="0 0 16 16"
                       fill="none"
-                      className="mt-0.5 flex-shrink-0"
+                      className="mt-0.5 shrink-0 text-mint-glow"
                     >
                       <path
-                        d="M4 8 L7 11 L12 5"
-                        stroke="#97fcd7"
+                        d="M3.5 8 L6.5 11 L12.5 4"
+                        stroke="currentColor"
                         strokeWidth="2"
                         strokeLinecap="round"
                         strokeLinejoin="round"
                       />
                     </svg>
-                    {feature}
+                    <span>{feature}</span>
                   </li>
                 ))}
               </ul>
 
-              {/* CTA */}
+              {/* CTA Button */}
               {plan.name === "Gratis" ? (
                 <Link
                   href="/register"
-                  className={`btn-pill text-center ${
-                    plan.highlighted ? "btn-primary" : "btn-ghost"
+                  className={`w-full py-3.5 px-6 rounded-full text-center text-sm font-medium transition-all ${
+                    plan.highlighted
+                      ? "bg-mint-glow text-forest-depths hover:shadow-[0_0_15px_rgba(151,252,215,0.4)]"
+                      : "border border-mint-glow/40 text-mint-glow hover:bg-mint-glow/10"
                   }`}
                 >
                   {plan.cta}
@@ -187,8 +192,10 @@ export default function Pricing() {
                 <button
                   onClick={() => handleCheckout(plan.name.toLowerCase())}
                   disabled={loading === plan.name.toLowerCase()}
-                  className={`btn-pill text-center w-full ${
-                    plan.highlighted ? "btn-primary" : "btn-ghost"
+                  className={`w-full py-3.5 px-6 rounded-full text-center text-sm font-medium transition-all ${
+                    plan.highlighted
+                      ? "bg-mint-glow text-forest-depths hover:shadow-[0_0_15px_rgba(151,252,215,0.4)]"
+                      : "border border-mint-glow/40 text-mint-glow hover:bg-mint-glow/10"
                   }`}
                 >
                   {loading === plan.name.toLowerCase() ? "Redirigiendo..." : plan.cta}

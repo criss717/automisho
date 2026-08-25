@@ -64,40 +64,36 @@
    BASE STYLES
    ═══════════════════════════════════════════════════════════════ */
 
-* {
-  margin: 0;
-  padding: 0;
-  box-sizing: border-box;
-}
+@layer base {
+  *, ::after, ::before {
+    box-sizing: border-box;
+  }
 
-html {
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
-}
+  html {
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
 
-body {
-  font-family: var(--font-inter);
-  font-weight: 300;
-  font-size: var(--text-body-sm);
-  line-height: var(--leading-body-sm);
-  color: var(--color-mist-gray);
-  background-color: var(--color-forest-depths);
-  overflow-x: hidden;
-}
+  body {
+    font-family: var(--font-inter);
+    font-weight: 300;
+    font-size: var(--text-body-sm);
+    line-height: var(--leading-body-sm);
+    color: var(--color-mist-gray);
+    background-color: var(--color-forest-depths);
+    overflow-x: hidden;
+  }
 
-::selection {
-  background: rgba(151, 252, 215, 0.2);
-  color: var(--color-pure-light);
-}
+  h1, h2, h3, h4, h5, h6 {
+    font-family: var(--font-teodor);
+    font-weight: 400;
+    color: var(--color-pure-light);
+  }
 
-/* ═══════════════════════════════════════════════════════════════
-   TYPOGRAPHY
-   ═══════════════════════════════════════════════════════════════ */
-
-h1, h2, h3, h4, h5, h6 {
-  font-family: var(--font-teodor);
-  font-weight: 400;
-  color: var(--color-pure-light);
+  ::selection {
+    background: rgba(151, 252, 215, 0.2);
+    color: var(--color-pure-light);
+  }
 }
 
 .text-display {

@@ -2,14 +2,25 @@
 
 import { useEffect } from "react";
 import { useRouter } from "next/navigation";
+import NutSpinner from "@/components/icons/NutSpinner";
 
 export default function ChatPage() {
   const router = useRouter();
 
   useEffect(() => {
-    // Create a new conversation and redirect
-    const createAndRedirect = async () => {
+    const initAndRedirect = async () => {
       try {
+        // First check if there is an existing conversation to avoid creating duplicate empty ones
+        const listRes = await fetch("/api/conversations");
+        if (listRes.ok) {
+          const list = await listRes.json();
+          if (Array.isArray(list) && list.length > 0) {
+            router.replace(`/chat/${list[0].id}`);
+            return;
+          }
+        }
+
+        // Only create new if none exist
         const res = await fetch("/api/conversations", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -19,21 +30,21 @@ export default function ChatPage() {
           const conv = await res.json();
           router.replace(`/chat/${conv.id}`);
         } else if (res.status === 403) {
-          // Limit reached — show message
           const data = await res.json();
           alert(data.message);
           router.replace("/dashboard");
         }
       } catch (err) {
-        console.error("Failed to create conversation:", err);
+        console.error("Failed to initialize conversation:", err);
       }
     };
-    createAndRedirect();
+    initAndRedirect();
   }, [router]);
 
   return (
-    <div className="h-full flex items-center justify-center">
-      <div className="text-sm text-mist-gray/40">Creando conversación...</div>
+    <div className="h-full flex flex-col items-center justify-center gap-3 bg-forest-depths">
+      <NutSpinner size={36} className="text-mint-glow" />
+      <div className="text-xs text-mist-gray/60 font-medium">Iniciando Copilot Workspace...</div>
     </div>
   );
 }

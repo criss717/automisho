@@ -14,20 +14,22 @@ import { checkRateLimit, rateLimitResponse } from "@/lib/rate-limit";
 const BACKEND_URL = process.env.BACKEND_URL || "http://localhost:8000";
 
 // Helpers are centralized in @/lib/chat-helpers for testability and to avoid Next.js route export validation
-import { detectVIN, detectPlate, detectCarSearch } from "@/lib/chat-helpers";
+import { detectVIN, detectPlate, detectCarSearch, enrichCarResult } from "@/lib/chat-helpers";
 
-async function searchBackend(query: string, maxPrice?: number, minPrice?: number) {
+import { lookupVehicleDgt } from "@/lib/dgt-client";
+
+async function searchBackend(query: string, maxPrice?: number, minPrice?: number, searchMode: string = "fast") {
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 12000);
+  const timeout = setTimeout(() => controller.abort(), 6000);
   try {
-    const max_results = 8; // clamp 1..12 defensivo
-    const clamped = Math.max(1, Math.min(12, max_results));
+    const max_results = 10;
+    const clamped = Math.max(1, Math.min(16, max_results));
     const res = await fetch(`${BACKEND_URL}/scrape`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         query,
-        source: "auto",
+        source: searchMode,
         max_results: clamped,
         max_price: maxPrice,
         min_price: minPrice,
@@ -42,20 +44,6 @@ async function searchBackend(query: string, maxPrice?: number, minPrice?: number
     return null;
   } finally {
     clearTimeout(timeout);
-  }
-}
-
-async function lookupDgt(plate: string) {
-  try {
-    const res = await fetch(`${BACKEND_URL}/dgt`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ plate }),
-    });
-    if (!res.ok) return null;
-    return await res.json();
-  } catch {
-    return null;
   }
 }
 
@@ -116,47 +104,60 @@ export async function POST(req: Request) {
     let extraData: Record<string, unknown> | null = null;
     const extraDataCars: unknown[] = [];
 
+    // Check for uploaded PDF or image files in message parts
+    for (const part of (lastUserMessage.parts || []) as Record<string, unknown>[]) {
+      if (part.type === "file" && typeof part.url === "string") {
+        const url = part.url as string;
+        if (url.includes("application/pdf") || (part.mediaType as string) === "application/pdf") {
+          try {
+            const base64Data = url.split(",")[1];
+            if (base64Data) {
+              const buffer = Buffer.from(base64Data, "base64");
+              const rawText = buffer.toString("latin1");
+              const cleanStrings = rawText.match(/[a-zA-Z0-9áéíóúÁÉÍÓÚñÑ\s:.,\/\-]{4,}/g) || [];
+              const extractedText = cleanStrings.join(" ").slice(0, 4000);
+              if (extractedText.trim()) {
+                contextData += `\n\n## DOCUMENTO PDF ADJUNTO POR EL USUARIO (Informe DGT / Ficha ITV / CarVertical):\n${extractedText}\n\nAudita este documento detalladamente: revisa si hay defectos graves de ITV, cargas financieras o embargos, fecha de primera matriculación y coherencia del kilometraje.`;
+              }
+            }
+          } catch (pdfErr) {
+            console.warn("[chat] PDF extraction error:", pdfErr);
+          }
+        }
+      }
+    }
+
     if (search.isSearch) {
       const searchResults = await searchBackend(search.query, search.maxPrice, search.minPrice);
       console.log("[chat] search results:", searchResults?.total ?? 0, "from", searchResults?.source, "maxPrice", search.maxPrice);
 
       if (searchResults?.results?.length > 0) {
-        const cars = searchResults.results
+        const enriched = searchResults.results.map((c: Record<string, unknown>) =>
+          enrichCarResult(c, search.maxPrice)
+        );
+
+        const cars = enriched
           .map(
             (c: Record<string, unknown>, i: number) =>
-              `${i + 1}. **${c.title}** — ${c.price ? (c.price as number).toLocaleString("es-ES") + "€" : "Precio no disponible"} | ${c.year || "¿?"} | ${c.km ? (c.km as number).toLocaleString("es-ES") + "km" : "¿km?"} | ${c.fuel || ""} | Fuente: ${c.source}${c.url ? ` | ${c.url}` : ""}`
+              `${i + 1}. **${c.title}** — ${c.price ? (c.price as number).toLocaleString("es-ES") + "€" : "Precio no disponible"} | ${c.year || "¿?"} | ${c.km ? (c.km as number).toLocaleString("es-ES") + "km" : "¿km?"} | ${c.fuel || ""} | Puntuación IA: ${c.score}/100 | Fuente: ${c.source}${c.url ? ` | ${c.url}` : ""}`
           )
           .join("\n");
 
-        contextData = `\n\n## Resultados de búsqueda en tiempo real (${searchResults.total} coches encontrados en ${searchResults.source}):\n${cars}\n\nResponde con estos datos reales. Muestra los 3-5 mejores según el criterio del usuario. Incluye precio, año, km, fuente y link. Si hay image_url, menciona que hay foto disponible.`;
+        contextData += `\n\n## Resultados de búsqueda en tiempo real (${searchResults.total} coches encontrados en ${searchResults.source}):\n${cars}\n\nResponde con estos datos reales. Muestra los mejores según el criterio del usuario. Incluye precio, año, km, fuente, link y menciona brevemente 1-2 ventajas y 1 punto a tener en cuenta. Concluye SIEMPRE con las 3 preguntas clave para la llamada al vendedor (facturas de distribución/embrague, matrícula exacta o VIN, y motivo de venta).`;
 
-        // Collect for data block
-        extraDataCars.push(
-          ...searchResults.results.map((c: Record<string, unknown>) => ({
-            ...c,
-            image_url: (c.image_url as string | null) ?? (c.image as string | null) ?? null,
-          }))
-        );
+        // Collect enriched for data block and dashboard
+        extraDataCars.push(...enriched);
       } else {
-        contextData = `\n\n## Búsqueda ejecutada pero sin resultados\nSe buscó "${search.query}"${search.maxPrice ? ` con precio máximo ${search.maxPrice}€` : ""} en AutoScout24, coches.net, Wallapop y Milanuncios. No se encontraron anuncios. Informa al usuario y sugiere ajustar la búsqueda (cambiar marca, ampliar presupuesto, etc.).`;
+        contextData += `\n\n## Búsqueda ejecutada pero sin resultados\nSe buscó "${search.query}"${search.maxPrice ? ` con precio máximo ${search.maxPrice}€` : ""} en AutoScout24, coches.net, Wallapop y Milanuncios. No se encontraron anuncios actualmente con esos filtros exactos. Informa al usuario con amabilidad y sugiere ajustar la búsqueda (ampliar presupuesto, cambiar marca o modelo).`;
       }
     }
 
-    if (plate) {
-      const dgtResult = await lookupDgt(plate);
-      if (dgtResult && !dgtResult.error) {
-        contextData += `\n\n## Consulta DGT — Matrícula ${dgtResult.plate}:\n- Marca: ${dgtResult.make}\n- Modelo: ${dgtResult.model}\n- Año: ${dgtResult.year}\n- Combustible: ${dgtResult.fuel}\n- Potencia: ${dgtResult.power}\n- ITV: ${dgtResult.itv_status}\n- Matriculación: ${dgtResult.enrollment_date}\n- Fuente: ${dgtResult.source ?? "mock"} (${dgtResult.source === "mock" ? "Demo — datos de ejemplo" : "Oficial"})`;
-      }
-    }
-
-    // DGT didactic guidance when plate or VIN detected
     if (plate || vin) {
-      contextData += `\n\n## Guía informes: ofrece las 3 opciones con links y explica diferencias — DGT oficial 8,67€ (tasa 4.1 en https://sede.dgt.gob.es/es/vehiculos/informe-de-vehiculo/ con Cl@ve/certificado, pagar tasa, descargar PDF y qué mirar: titulares, cargas/embargos, ITV, km, bajas), CarVertical (~15€ VIN en https://www.carvertical.com) y Carfax (~20€ VIN en https://www.carfax.eu). No scrapees DGT, solo linkea.`;
-      if (plate) contextData += ` Matrícula detectada: ${plate}.`;
-      if (vin) contextData += ` VIN detectado: ${vin} — recomienda CarVertical/Carfax para historial completo.`;
+      const dgtResult = await lookupVehicleDgt(plate || vin || "");
+      contextData += `\n\n## Verificación Oficial DGT / Historial del Vehículo:\n- Matrícula/VIN: ${dgtResult.plate}\n- Fecha 1ª Matriculación en España: ${dgtResult.firstRegistrationDate || "No disponible"}\n- Distintivo Ambiental DGT Oficial: ${dgtResult.environmentalBadge || "Sin Distintivo"}\n- Estado DGT: ${dgtResult.status} (${dgtResult.statusDescription})\n- Informe Oficial DGT Tasa 4.1 (8,67€): ${dgtResult.officialReportUrl}\n- Informe CarVertical: ${dgtResult.carVerticalUrl}\n- Informe Carfax: ${dgtResult.carfaxUrl}\n\nUsa estos datos técnicos oficiales. Si la fecha de la matrícula contradice la del anuncio o lo que dijo el vendedor, alerta inmediatamente al usuario de la discrepancia.`;
     }
 
-    // Build extraData for MessageList car grid
+    // Build extraData for MessageList car grid and Copilot Live Dashboard
     if (extraDataCars.length > 0) {
       extraData = { cars: extraDataCars };
       if (plate || vin) {
@@ -182,26 +183,26 @@ export async function POST(req: Request) {
             const year = (c.year as string | number) || "¿?";
             const km = c.km ? `${(c.km as number).toLocaleString("es-ES")}km` : "¿km?";
             const fuel = (c.fuel as string) || "";
-            const source = (c.source as string) || "demo";
+            const source = (c.source as string) || "anuncio";
             const url = c.url ? ` — ${c.url}` : "";
             return `${i + 1}. **${c.title}** — ${price} | ${year} | ${km} | ${fuel} | Fuente: ${source}${url}`;
           })
           .join("\n");
-        return `¡He encontrado ${cars.length} opciones para ti! (respuesta local — el asistente IA está temporalmente no disponible, pero aquí tienes los resultados):\n\n${list}\n\nHe mostrado las mejores 3 opciones según tu presupuesto. ¿Quieres que profundice en alguna? Podrás chatear con detalles completos cuando el servicio IA vuelva a estar disponible.`;
+        return `¡He encontrado ${cars.length} opciones para ti! Puedes ver la comparativa detallada en el panel lateral:\n\n${list}\n\n¿Quieres que analice a fondo alguna de estas opciones?`;
       }
       if (plate || vin) {
-        return `He detectado ${plate ? `matrícula **${plate}**` : ""}${plate && vin ? " y " : ""}${vin ? `VIN **${vin}**` : ""}. El asistente IA está temporalmente no disponible, pero puedes consultar:\n\n- **DGT oficial 8,67€** (tasa 4.1) en https://sede.dgt.gob.es/es/vehiculos/informe-de-vehiculo/\n- **CarVertical ~15€** en https://www.carvertical.com\n- **Carfax ~20€** en https://www.carfax.eu\n\nVuelve a intentar en unos segundos y te daré el análisis completo.`;
+        return `He detectado ${plate ? `matrícula **${plate}**` : ""}${plate && vin ? " y " : ""}${vin ? `VIN **${vin}**` : ""}. Puedes consultar los informes recomendados:\n\n- **DGT oficial 8,67€** (tasa 4.1) en https://sede.dgt.gob.es/es/vehiculos/informe-de-vehiculo/\n- **CarVertical ~15€** en https://www.carvertical.com\n- **Carfax ~20€** en https://www.carfax.eu\n\n¿Deseas que revise algún dato específico de la ficha?`;
       }
-      return "Lo siento, el asistente IA está temporalmente no disponible (timeout del proveedor). Por favor, intenta de nuevo en unos segundos. Si el problema persiste, refresca la página. Tus resultados de búsqueda seguirán disponibles arriba si había coches encontrados.";
+      return "No he podido conectar temporalmente con el modelo de lenguaje, pero tus parámetros de búsqueda han sido registrados. Por favor, intenta de nuevo tu consulta.";
     };
 
-    // Attempt LLM stream with timeout + graceful fallback
+    // Attempt LLM stream with generous timeout (60s) + graceful fallback
     let llmTimeout: ReturnType<typeof setTimeout> | null = null;
     const abortController = new AbortController();
     llmTimeout = setTimeout(() => {
-      console.warn("[chat] LLM timeout 10s — aborting stream for", conversationId);
+      console.warn("[chat] LLM timeout 60s — aborting stream for", conversationId);
       try { abortController.abort(); } catch {}
-    }, 10000);
+    }, 60000);
 
     try {
       const result = streamText({
@@ -213,8 +214,12 @@ export async function POST(req: Request) {
           if (llmTimeout) clearTimeout(llmTimeout);
           if (conversationId && text) {
             try {
+              const savedText = extraDataCars.length > 0
+                ? `${text}\n\n<!--AUTOMISHO_CARS_DATA:${JSON.stringify(extraDataCars)}-->`
+                : text;
+
               await prisma.message.create({
-                data: { conversationId, role: "assistant", content: text },
+                data: { conversationId, role: "assistant", content: savedText },
               });
 
               const msgCount = await prisma.message.count({
@@ -234,36 +239,48 @@ export async function POST(req: Request) {
         },
       });
 
-      // Stream with optional data block for car cards — ALWAYS send data first
-      if (extraData) {
-        const uiStream = createUIMessageStream({
-          execute: async ({ writer }) => {
-            // Send data so MessageList can render car cards even if LLM later fails
-            (writer as unknown as { write: (c: unknown) => void }).write({
-              type: "data",
-              data: extraData,
-              transient: false,
-            });
-            // Merge LLM stream — if it errors mid-flight, data is already sent
-            try {
-              writer.merge(toUIMessageStream({ stream: result.stream } as unknown as { stream: ReadableStream }));
-            } catch (mergeErr) {
-              console.error("[chat] merge error (LLM stream failed after data):", mergeErr, { model: CHAT_MODEL, conversationId, hasCars: extraDataCars.length > 0 });
-              // fallback text will be handled by client error overlay, but data already delivered
-            }
-          },
-          onFinish: async () => {
-            if (llmTimeout) clearTimeout(llmTimeout);
-          },
-        });
-        const response = createUIMessageStreamResponse({ stream: uiStream });
-        response.headers.set("x-automisho-cars", encodeURIComponent(JSON.stringify(extraData)));
-        return response;
-      }
+      const streamId = "msg-" + Date.now();
+      const uiStream = createUIMessageStream({
+        execute: async ({ writer }) => {
+          writer.write({
+            type: "text-start",
+            id: streamId,
+          });
 
-      return createUIMessageStreamResponse({
-        stream: toUIMessageStream({ stream: result.stream } as unknown as { stream: ReadableStream }),
+          try {
+            for await (const chunk of result.textStream) {
+              writer.write({
+                type: "text-delta",
+                id: streamId,
+                delta: chunk,
+              });
+            }
+            if (extraDataCars.length > 0) {
+              writer.write({
+                type: "text-delta",
+                id: streamId,
+                delta: `\n\n<!--AUTOMISHO_CARS_DATA:${JSON.stringify(extraDataCars)}-->`,
+              });
+            }
+          } catch (streamErr) {
+            console.error("[chat] textStream error:", streamErr);
+          } finally {
+            writer.write({
+              type: "text-end",
+              id: streamId,
+            });
+          }
+        },
+        onFinish: async () => {
+          if (llmTimeout) clearTimeout(llmTimeout);
+        },
       });
+
+      const response = createUIMessageStreamResponse({ stream: uiStream });
+      if (extraData) {
+        response.headers.set("x-automisho-cars", encodeURIComponent(JSON.stringify(extraData)));
+      }
+      return response;
     } catch (llmErr: unknown) {
       if (llmTimeout) clearTimeout(llmTimeout);
       const errMsg = llmErr instanceof Error ? llmErr.message : String(llmErr);
@@ -284,8 +301,12 @@ export async function POST(req: Request) {
       // Persist fallback as assistant message so history is consistent
       if (conversationId) {
         try {
+          const savedFallback = extraDataCars.length > 0
+            ? `${fallbackText}\n\n<!--AUTOMISHO_CARS_DATA:${JSON.stringify(extraDataCars)}-->`
+            : fallbackText;
+
           await prisma.message.create({
-            data: { conversationId, role: "assistant", content: fallbackText },
+            data: { conversationId, role: "assistant", content: savedFallback },
           });
           const msgCount = await prisma.message.count({ where: { conversationId } });
           if (msgCount <= 2 && userText) {
