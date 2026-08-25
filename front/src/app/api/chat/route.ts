@@ -18,19 +18,20 @@ import { detectVIN, detectPlate, detectCarSearch, enrichCarResult } from "@/lib/
 
 import { lookupVehicleDgt } from "@/lib/dgt-client";
 
-async function searchBackend(query: string, maxPrice?: number, minPrice?: number, searchMode: string = "fast") {
+async function searchBackend(query: string, maxPrice?: number, minPrice?: number, searchMode: string = "standard") {
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 6000);
+  const timeoutMs = searchMode === "deep" ? 9000 : 6000;
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const max_results = 10;
-    const clamped = Math.max(1, Math.min(16, max_results));
+    const backendSource = searchMode === "deep" ? "deep" : "standard";
+    const max_results = searchMode === "deep" ? 40 : 25;
     const res = await fetch(`${BACKEND_URL}/scrape`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         query,
-        source: searchMode,
-        max_results: clamped,
+        source: backendSource,
+        max_results,
         max_price: maxPrice,
         min_price: minPrice,
       }),
@@ -64,7 +65,7 @@ export async function POST(req: Request) {
     if (!parsed.success) {
       return Response.json({ error: parsed.error.flatten().fieldErrors }, { status: 400 });
     }
-    const { messages, conversationId } = parsed.data;
+    const { messages, conversationId, searchMode = "standard" } = parsed.data;
 
     if (!Array.isArray(messages) || messages.length === 0) {
       return Response.json({ error: "No messages provided" }, { status: 400 });
@@ -128,33 +129,44 @@ export async function POST(req: Request) {
     }
 
     if (search.isSearch) {
-      const searchResults = await searchBackend(search.query, search.maxPrice, search.minPrice);
-      console.log("[chat] search results:", searchResults?.total ?? 0, "from", searchResults?.source, "maxPrice", search.maxPrice);
+      const searchResults = await searchBackend(search.query, search.maxPrice, search.minPrice, searchMode);
+      console.log("[chat] search results:", searchResults?.total ?? 0, "from", searchResults?.source, "mode:", searchMode, "maxPrice", search.maxPrice);
 
       if (searchResults?.results?.length > 0) {
         const enriched = searchResults.results.map((c: Record<string, unknown>) =>
           enrichCarResult(c, search.maxPrice)
         );
 
-        const cars = enriched
+        // Sort by score descending to prioritize best value/quality options
+        const sortedEnriched = [...enriched].sort((a, b) => (Number(b.score) || 0) - (Number(a.score) || 0));
+
+        const cars = sortedEnriched
           .map(
             (c: Record<string, unknown>, i: number) =>
               `${i + 1}. **${c.title}** — ${c.price ? (c.price as number).toLocaleString("es-ES") + "€" : "Precio no disponible"} | ${c.year || "¿?"} | ${c.km ? (c.km as number).toLocaleString("es-ES") + "km" : "¿km?"} | ${c.fuel || ""} | Puntuación IA: ${c.score}/100 | Fuente: ${c.source}${c.url ? ` | ${c.url}` : ""}`
           )
           .join("\n");
 
-        contextData += `\n\n## Resultados de búsqueda en tiempo real (${searchResults.total} coches encontrados en ${searchResults.source}):\n${cars}\n\nResponde con estos datos reales. Muestra los mejores según el criterio del usuario. Incluye precio, año, km, fuente, link y menciona brevemente 1-2 ventajas y 1 punto a tener en cuenta. Concluye SIEMPRE con las 3 preguntas clave para la llamada al vendedor (facturas de distribución/embrague, matrícula exacta o VIN, y motivo de venta).`;
+        contextData += `\n\n## Resultados reales ordenados por puntuación IA (${searchResults.total} coches analizados en el mercado español):\n${cars}\n\nInstrucción de Calidad y Coherencia: Presenta los mejores candidatos tomando estrictamente los primeros N coches de la lista anterior ordenada por puntuación. Tus recomendaciones deben coincidir de forma exacta con los vehículos analizados en el mercado. Para cada coche incluye: Precio, Kilometraje, Año, Combustible, Fuente y enlace [Ver anuncio ↗](url), 1-2 Ventajas reales y 1 Punto a revisar. Concluye SIEMPRE con las 3 preguntas clave para la llamada al vendedor (facturas de distribución/embrague, matrícula exacta o VIN, y motivo de venta).`;
 
         // Collect enriched for data block and dashboard
-        extraDataCars.push(...enriched);
+        extraDataCars.push(...sortedEnriched);
       } else {
-        contextData += `\n\n## Búsqueda ejecutada pero sin resultados\nSe buscó "${search.query}"${search.maxPrice ? ` con precio máximo ${search.maxPrice}€` : ""} en AutoScout24, coches.net, Wallapop y Milanuncios. No se encontraron anuncios actualmente con esos filtros exactos. Informa al usuario con amabilidad y sugiere ajustar la búsqueda (ampliar presupuesto, cambiar marca o modelo).`;
+        contextData += `\n\n## Búsqueda ejecutada pero sin resultados\nSe buscó "${search.query}"${search.maxPrice ? ` con precio máximo ${search.maxPrice}€` : ""} en el mercado. No se encontraron anuncios actualmente con esos filtros exactos. Informa al usuario con amabilidad y sugiere ajustar la búsqueda (ampliar presupuesto, cambiar marca o modelo).`;
       }
     }
 
-    if (plate || vin) {
-      const dgtResult = await lookupVehicleDgt(plate || vin || "");
-      contextData += `\n\n## Verificación Oficial DGT / Historial del Vehículo:\n- Matrícula/VIN: ${dgtResult.plate}\n- Fecha 1ª Matriculación en España: ${dgtResult.firstRegistrationDate || "No disponible"}\n- Distintivo Ambiental DGT Oficial: ${dgtResult.environmentalBadge || "Sin Distintivo"}\n- Estado DGT: ${dgtResult.status} (${dgtResult.statusDescription})\n- Informe Oficial DGT Tasa 4.1 (8,67€): ${dgtResult.officialReportUrl}\n- Informe CarVertical: ${dgtResult.carVerticalUrl}\n- Informe Carfax: ${dgtResult.carfaxUrl}\n\nUsa estos datos técnicos oficiales. Si la fecha de la matrícula contradice la del anuncio o lo que dijo el vendedor, alerta inmediatamente al usuario de la discrepancia.`;
+    if (vin) {
+      const { decodeVin } = await import("@/lib/vin-decoder");
+      const vinInfo = decodeVin(vin);
+      if (vinInfo.isValid) {
+        contextData += `\n\n## Decodificación Oficial por Número de Bastidor (VIN):\n- VIN: ${vinInfo.vin}\n- Fabricante: ${vinInfo.manufacturer}\n- País de Ensamblaje: ${vinInfo.country}\n- Año Modelo Oficial: ${vinInfo.modelYear || "No especificado"}\n- Informes de Historial Internacional: AutoDNA (${vinInfo.reports.autoDnaUrl}), CarVertical (${vinInfo.reports.carVerticalUrl}), Carfax (${vinInfo.reports.carfaxUrl}) y vinAudit (${vinInfo.reports.vinAuditUrl}).`;
+      }
+    }
+
+    if (plate) {
+      const dgtResult = await lookupVehicleDgt(plate);
+      contextData += `\n\n## Verificación Oficial DGT / Historial del Vehículo:\n- Matrícula: ${dgtResult.plate}\n- Fecha 1ª Matriculación en España: ${dgtResult.firstRegistrationDate || "No disponible"}\n- Distintivo Ambiental DGT Oficial: ${dgtResult.environmentalBadge || "Sin Distintivo"}\n- Estado DGT: ${dgtResult.status} (${dgtResult.statusDescription})\n- Informe Oficial DGT Tasa 4.1 (8,67€): ${dgtResult.officialReportUrl}\n- Informe CarVertical: ${dgtResult.carVerticalUrl}\n- Informe Carfax: ${dgtResult.carfaxUrl}\n\nUsa estos datos técnicos oficiales. Si la fecha de la matrícula contradice la del anuncio o lo que dijo el vendedor, alerta inmediatamente al usuario de la discrepancia.`;
     }
 
     // Build extraData for MessageList car grid and Copilot Live Dashboard

@@ -3,6 +3,7 @@ import { z } from "zod";
 export const ChatBody = z.object({
   messages: z.array(z.any()).min(1),
   conversationId: z.string().min(1).optional(),
+  searchMode: z.enum(["standard", "deep", "fast"]).optional(),
 });
 
 export const CheckoutBody = z.object({

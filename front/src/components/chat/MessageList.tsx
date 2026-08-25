@@ -47,8 +47,8 @@ export default function MessageList({ messages, isLoading, onAskCopilot }: Messa
             </p>
             <div className="flex flex-wrap justify-center gap-2">
               {[
-                "5 coches de menos de 3000 euros",
-                "SUV familiar menos de 15.000€",
+                "5 coches de 3.000€ o menos",
+                "SUV familiar de 15.000€ o menos",
                 "Eléctrico o híbrido para ciudad",
               ].map((suggestion) => (
                 <button

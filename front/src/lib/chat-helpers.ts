@@ -130,9 +130,16 @@ export function enrichCarResult(car: Record<string, unknown>, requestedMaxPrice?
   const pros: string[] = [];
   const cons: string[] = [];
 
-  if (requestedMaxPrice && price > 0 && price <= requestedMaxPrice) {
-    score += 5;
-    pros.push(`Dentro de tu presupuesto (< ${requestedMaxPrice.toLocaleString("es-ES")}€)`);
+  if (requestedMaxPrice && price > 0) {
+    if (price <= requestedMaxPrice) {
+      score += 5;
+      pros.push(`Dentro de tu presupuesto (< ${requestedMaxPrice.toLocaleString("es-ES")}€)`);
+    } else if (price > requestedMaxPrice * 1.15) {
+      score -= 30;
+      cons.push(`Excede tu presupuesto de ${requestedMaxPrice.toLocaleString("es-ES")}€ (${price.toLocaleString("es-ES")}€)`);
+    } else {
+      pros.push(`Precio cercano al presupuesto`);
+    }
   } else if (price > 0) {
     pros.push(`Precio competitivo en el mercado actual`);
   }

@@ -116,9 +116,9 @@ def _clean_keywords(query: str) -> str:
 
 @router.post("", response_model=ScrapeResponse)
 async def scrape_cars(req: ScrapeRequest):
-    """Scrape car listings from the selected source."""
-    # Clamp max_results 1..16
-    req.max_results = max(1, min(req.max_results, 16))
+    """Scrape car listings from the selected source (standard 50 / deep 100)."""
+    # Clamp max_results 1..100
+    req.max_results = max(1, min(req.max_results, 100))
 
     if req.source in ("auto", "deep"):
         tasks = [
@@ -134,6 +134,19 @@ async def scrape_cars(req: ScrapeRequest):
                 flat.extend(r)
             elif isinstance(r, Exception):
                 logger.error(f"[scrape] source failed: {r}")
+
+        # Strict price bounds filter (eliminates sponsored ads that ignore query params)
+        if req.max_price:
+            flat = [c for c in flat if (c.price and c.price <= req.max_price * 1.05)]
+        if req.min_price:
+            flat = [c for c in flat if (c.price and c.price >= req.min_price * 0.95)]
+
+        # Discard incomplete or unpriced skeleton cards
+        flat = [
+            c for c in flat
+            if c.title and c.title.strip() not in ("Sin título", "Vehículo sin título", "Vehículo en Wallapop", "Sin titulo")
+            and c.price and c.price > 0
+        ]
 
         # Deduplicate by url/title
         seen: set[str] = set()
@@ -165,8 +178,8 @@ async def scrape_cars(req: ScrapeRequest):
             query=req.query,
             total=len(sliced),
         )
-    elif req.source == "fast":
-        # Fast mode: AutoScout24 + Coches.net only (~2s response time)
+    elif req.source in ("fast", "standard"):
+        # Fast / Standard mode: AutoScout24 + Coches.net (up to 50 vehicles, ~2.5s)
         tasks = [
             _scrape_with_retry(_scrape_autoscout24, req),
             _scrape_with_retry(_scrape_cochesnet, req),
@@ -176,6 +189,19 @@ async def scrape_cars(req: ScrapeRequest):
         for r in results:
             if isinstance(r, list):
                 flat.extend(r)
+
+        # Strict price bounds filter
+        if req.max_price:
+            flat = [c for c in flat if (c.price and c.price <= req.max_price * 1.05)]
+        if req.min_price:
+            flat = [c for c in flat if (c.price and c.price >= req.min_price * 0.95)]
+
+        # Discard incomplete or unpriced skeleton cards
+        flat = [
+            c for c in flat
+            if c.title and c.title.strip() not in ("Sin título", "Vehículo sin título", "Vehículo en Wallapop", "Sin titulo")
+            and c.price and c.price > 0
+        ]
 
         seen: set[str] = set()
         deduped: list[CarResult] = []
@@ -199,10 +225,10 @@ async def scrape_cars(req: ScrapeRequest):
                     balanced.append(src_list[i])
 
         sliced = balanced[: req.max_results]
-        logger.info(f"[scrape] fast aggregated {len(sliced)} from {len(by_source)} sources")
+        logger.info(f"[scrape] standard aggregated {len(sliced)} from {len(by_source)} sources")
         return ScrapeResponse(
             results=sliced,
-            source="fast",
+            source="standard",
             query=req.query,
             total=len(sliced),
         )
@@ -563,7 +589,7 @@ async def _scrape_wallapop(req: ScrapeRequest) -> list[CarResult]:
                 or []
             )
             logger.info(f"Wallapop: found {len(items)} items via NEXT_DATA")
-            for item in items[: req.max_results or 12]:
+            for item in items[: req.max_results or 25]:
                 # Normalize price: item.price may be dict or int
                 price_val = item.get("price")
                 if isinstance(price_val, dict):
@@ -572,6 +598,13 @@ async def _scrape_wallapop(req: ScrapeRequest) -> list[CarResult]:
                     price_int = int(re.sub(r"[^\d]", "", str(price_val))) if price_val else None
                 except:
                     price_int = None
+
+                # Strict price bounds check
+                if req.max_price and price_int and price_int > req.max_price:
+                    continue
+                if req.min_price and price_int and price_int < req.min_price:
+                    continue
+
                 # year/km/fuel may be in attributes
                 year = item.get("year")
                 km = item.get("km") or item.get("mileage")
@@ -609,25 +642,41 @@ async def _scrape_wallapop(req: ScrapeRequest) -> list[CarResult]:
 
     # Fallback: try to parse HTML directly if NEXT_DATA failed or empty
     soup_fallback = BeautifulSoup(resp.text, "lxml")
-    cards = soup_fallback.select("[class*='ItemCard'], [class*='card-item'], [class*='productCard']")
+    cards = soup_fallback.select("[class*='ItemCard'], [class*='card-item'], [class*='productCard'], a[href*='/item/']")
     logger.info(f"Wallapop HTML fallback: {len(cards)} cards")
-    limit = min(len(cards), req.max_results or 12)
+    limit = min(len(cards), req.max_results or 25)
     for card in cards[:limit]:
-        title_el = card.select_one("[class*='title'], h3, h2")
-        price_el = card.select_one("[class*='price']")
-        link_el = card.select_one("a[href]")
-        img_el = card.select_one("img")
+        title_el = card.select_one("[class*='title'], h3, h2, p")
+        price_el = card.select_one("[class*='price'], span[class*='Price']")
+        link_el = card if card.name == "a" and card.get("href") else card.select_one("a[href*='/item/'], a[href]")
+        img_el = card.select_one("img, source")
         image_url = None
         if img_el:
-            image_url = img_el.get("src") or img_el.get("data-src")
+            image_url = img_el.get("src") or img_el.get("data-src") or img_el.get("srcset") or img_el.get("data-srcset")
+            if image_url and "," in image_url:
+                image_url = image_url.split(",")[0].strip().split(" ")[0]
             if image_url and image_url.startswith("//"):
                 image_url = "https:" + image_url
+            if image_url and image_url.startswith("/"):
+                image_url = "https://es.wallapop.com" + image_url
+
         href = link_el["href"] if link_el and link_el.get("href") else ""
         if href and not href.startswith("http"):
             href = f"https://es.wallapop.com{href}"
+
+        title = title_el.get_text(strip=True) if title_el else "Vehículo en Wallapop"
+        if not href or href == "https://es.wallapop.com":
+            href = f"https://es.wallapop.com/app/search?category_ids=100&keywords={quote(title)}"
+
+        price = _parse_price(price_el.get_text(strip=True)) if price_el else None
+        if req.max_price and price and price > req.max_price:
+            continue
+        if req.min_price and price and price < req.min_price:
+            continue
+
         results.append(CarResult(
-            title=title_el.get_text(strip=True) if title_el else "Sin título",
-            price=_parse_price(price_el.get_text(strip=True)) if price_el else None,
+            title=title,
+            price=price,
             url=href,
             image_url=image_url,
             source="wallapop",
@@ -721,6 +770,12 @@ async def _scrape_milanuncios(req: ScrapeRequest) -> list[CarResult]:
 
             price_el = item.select_one(".ma-AdCard-price, [class*='price'], .adCard__price")
             price = _parse_price(price_el.get_text(strip=True)) if price_el else None
+
+            # Strict price filter (skip Milanuncios sponsored ads that violate precio-hasta)
+            if req.max_price and price and price > req.max_price:
+                continue
+            if req.min_price and price and price < req.min_price:
+                continue
 
             link_el = item.select_one("a[href]")
             link = ""

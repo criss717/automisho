@@ -274,9 +274,9 @@ export default function CopilotLiveDashboard({
                 Prueba pidiéndole:
               </p>
               {[
-                "5 coches de menos de 3000 euros",
-                "SUV diésel con etiqueta C por 10.000€",
-                "Compacto gasolina fiable menos de 6.000€",
+                "5 coches de 3.000€ o menos",
+                "SUV diésel etiqueta C por 10.000€ o menos",
+                "Compacto gasolina fiable de 6.000€ o menos",
               ].map((suggestion) => (
                 <button
                   key={suggestion}

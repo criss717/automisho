@@ -123,7 +123,7 @@ export default function ChatWindow({
     }
   }, [messages, onCarsDiscovered, isLoading]);
 
-  const handleSubmit = (message: string, files?: FileList) => {
+  const handleSubmit = (message: string, files?: FileList, searchMode?: "standard" | "deep") => {
     if ((!message.trim() && (!files || files.length === 0)) || isLoading) return;
     if (files && files.length > 0) {
       sendMessage(
@@ -131,10 +131,10 @@ export default function ChatWindow({
           text: message,
           files: files as unknown as FileList,
         } as unknown as Parameters<typeof sendMessage>[0],
-        { body: { conversationId } }
+        { body: { conversationId, searchMode } }
       );
     } else {
-      sendMessage({ text: message }, { body: { conversationId } });
+      sendMessage({ text: message }, { body: { conversationId, searchMode } });
     }
     setInput("");
   };
