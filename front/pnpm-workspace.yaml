@@ -1,0 +1,7 @@
+allowBuilds:
+  '@parcel/watcher': true
+  '@prisma/engines': true
+  prisma: true
+  unrs-resolver: true
+overrides:
+  deepmerge-ts: '>=8.0.0'

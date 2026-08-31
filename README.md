@@ -163,7 +163,7 @@ python main.py
 
 ```bash
 cd front
-npm install
+pnpm install
 
 # Configura las variables de entorno
 cp .env.local.example .env.local
@@ -192,13 +192,13 @@ BACKEND_URL="http://localhost:8000"
 
 Genera el cliente Prisma y ejecuta la base de datos:
 ```bash
-npx prisma generate
-npx prisma db push
+pnpm prisma generate
+pnpm prisma db push
 ```
 
 Inicia el entorno de desarrollo:
 ```bash
-npm run dev
+pnpm dev
 ```
 > Abre tu navegador en `http://localhost:3000`.
 
@@ -211,10 +211,10 @@ El proyecto cuenta con una sólida suite de pruebas unitarias y de integración:
 ```bash
 cd front
 # Ejecutar suite de pruebas Jest
-npm test
+pnpm test
 
 # Ejecutar compilación de producción Next.js
-npm run build
+pnpm build
 ```
 
 ---
