@@ -10,6 +10,9 @@ class ScrapeRequest(BaseModel):
     max_price: Optional[int] = Field(default=None, ge=0)
     min_year: Optional[int] = Field(default=None, ge=1990)
     max_km: Optional[int] = Field(default=None, ge=0)
+    doors: Optional[int] = Field(default=None, ge=2, le=7, description="Number of doors (e.g. 3, 5)")
+    body_type: Optional[str] = Field(default=None, description="Body type: cabrio, coupe, sedan, etc.")
+    color: Optional[str] = Field(default=None, description="Color preference")
 
 
 class CarResult(BaseModel):
@@ -23,6 +26,8 @@ class CarResult(BaseModel):
     location: Optional[str] = None
     url: Optional[str] = None
     image_url: Optional[str] = None
+    images: list[str] = Field(default_factory=list)
+    doors: Optional[int] = None
     source: str
 
 

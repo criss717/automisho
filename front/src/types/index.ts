@@ -1,5 +1,22 @@
 export type Plan = "free" | "premium" | "pro";
 
+export interface FlipOpportunity {
+  flipPotential?: "Alto" | "Medio" | "Bajo" | null;
+  damageSummary?: string | null;
+  estimatedRepairCost?: string | null;
+}
+
+export interface VisualAudit {
+  doorsDetected?: number | null;
+  bodyCondition?: string;
+  verified3p?: boolean;
+  colorDetected?: string | null;
+  bodyTypeDetected?: string | null;
+  userCriteriaMatch?: boolean | null;
+  criteriaNotes?: string | null;
+  flipOpportunity?: FlipOpportunity | null;
+}
+
 export interface CarResult {
   title: string;
   price: number | string;
@@ -11,9 +28,12 @@ export interface CarResult {
   source: string;
   url?: string;
   image_url?: string | null;
+  images?: string[];
   fuel?: string | null;
   currency?: string;
+  doors?: number | null;
   pros?: string[];
   cons?: string[];
+  visualAudit?: VisualAudit | null;
 }
 

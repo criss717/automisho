@@ -16,7 +16,7 @@ jest.mock("@/lib/prisma", () => ({
 }));
 jest.mock("@/lib/ai", () => ({ opencode: jest.fn(), CHAT_MODEL: "qwen3.7-plus", AUTOMISHO_SYSTEM_PROMPT: "test" }));
 
-import { detectCarSearch, detectPlate, detectVIN } from "@/lib/chat-helpers";
+import { detectCarSearch, detectPlate, detectVIN, isCarMatchingDoors } from "@/lib/chat-helpers";
 
 describe("detectCarSearch", () => {
   const fixtures: Array<{ query: string; isSearch: boolean; maxPrice?: number; minPrice?: number }> = [
@@ -64,6 +64,17 @@ describe("detectCarSearch", () => {
   it("OR logic: 3000€ alone triggers", () => {
     expect(detectCarSearch("3000€").isSearch).toBe(true);
   });
+
+  it("doors detection: 3 puertas, 5p", () => {
+    const res3 = detectCarSearch("a ver 3 puertas de 4000 €");
+    expect(res3.isSearch).toBe(true);
+    expect(res3.doors).toBe(3);
+    expect(res3.maxPrice).toBe(4000);
+
+    const res5 = detectCarSearch("coche familiar 5p barato");
+    expect(res5.isSearch).toBe(true);
+    expect(res5.doors).toBe(5);
+  });
 });
 
 describe("detectPlate", () => {
@@ -94,5 +105,34 @@ describe("detectVIN", () => {
   });
   it("case insensitive", () => {
     expect(detectVIN("wvwzzz1jz3w386752")).toBe("WVWZZZ1JZ3W386752");
+  });
+});
+
+describe("isCarMatchingDoors", () => {
+  it("allows 3-door cars when 3 doors requested", () => {
+    expect(isCarMatchingDoors("Seat Ibiza 1.9 TDI Sport 3p", "", 3)).toBe(true);
+    expect(isCarMatchingDoors("Renault Clio 1.2 16V 3 puertas", "", 3)).toBe(true);
+    expect(isCarMatchingDoors("Citroën C4 Coupé 1.6 HDi", "", 3)).toBe(true);
+    expect(isCarMatchingDoors("Peugeot 206 1.4 HDi XS 3p", "", 3)).toBe(true);
+    expect(isCarMatchingDoors("Ford Fiesta 1.4 TDCi 3p", "", 3)).toBe(true);
+  });
+
+  it("strictly rejects 4/5-door cars when 3 doors requested", () => {
+    expect(isCarMatchingDoors("Volvo S60 2.4D 4p", "", 3)).toBe(false);
+    expect(isCarMatchingDoors("Chevrolet Cruze 4p", "", 3)).toBe(false);
+    expect(isCarMatchingDoors("Audi A6 2.5 TDI Berlina", "", 3)).toBe(false);
+    expect(isCarMatchingDoors("Volvo V40 1.9D Familiar", "", 3)).toBe(false);
+    expect(isCarMatchingDoors("Mercedes-Benz E 300", "", 3)).toBe(false);
+    expect(isCarMatchingDoors("Skoda Fabia 1.2", "", 3)).toBe(false);
+    expect(isCarMatchingDoors("Citroen C3 1.4 HDi", "", 3)).toBe(false);
+    expect(isCarMatchingDoors("Volkswagen Passat 2.0 TDI", "", 3)).toBe(false);
+    expect(isCarMatchingDoors("Ford Mondeo 2.0 TDCi", "", 3)).toBe(false);
+    expect(isCarMatchingDoors("Seat Leon 1.9 TDI 5 puertas", "", 3)).toBe(false);
+  });
+
+  it("allows 5-door cars when 5 doors requested and rejects 3-door coupes", () => {
+    expect(isCarMatchingDoors("Ford Focus 1.6 TDCi 5p", "", 5)).toBe(true);
+    expect(isCarMatchingDoors("Seat Ibiza 1.9 TDI 3p", "", 5)).toBe(false);
+    expect(isCarMatchingDoors("Renault Megane Coupé", "", 5)).toBe(false);
   });
 });

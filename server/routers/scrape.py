@@ -7,6 +7,7 @@ import logging
 import asyncio
 from urllib.parse import quote
 import json
+from data.market_catalog import get_market_catalog_cars
 
 logger = logging.getLogger("scrape")
 router = APIRouter(prefix="/scrape", tags=["scraping"])
@@ -60,7 +61,9 @@ NOISE = {"coches", "coche", "por", "de", "del", "un", "una", "el", "la", "los", 
          "menos", "más", "mas", "que", "euros", "€", "euro", "diesel", "diésel", "gasolina",
          "segunda", "mano", "hay", "buenos", "bueno", "baratos", "barato",
          "hola", "dame", "las", "mejores", "cinco", "opciones", "mejor", "opcion",
-         "quiero", "busco", "necesito", "para", "con", "sin", "hasta", "sobre", "entre", "y", "a", "al", "en", "mi", "mis"}
+         "quiero", "busco", "necesito", "para", "con", "sin", "hasta", "sobre", "entre", "y", "a", "al", "en", "mi", "mis",
+         "puertas", "puerta", "p", "solo", "ojo", "ver", "pero",
+         "smejores", "porfa", "favor", "buenas", "candidatos", "tres", "cuatro"}
 
 CITY_COORDS = {
     "madrid": (40.4168, -3.7038),
@@ -114,11 +117,43 @@ def _clean_keywords(query: str) -> str:
     return " ".join(matched)
 
 
+def is_strictly_3_door(title: str, url: str = "") -> bool:
+    """Check if car strictly matches 3-door body style and reject 4/5-door models."""
+    text = f"{title} {url}".lower()
+    if re.search(r"\b[45]p\b|\b[45]\s*puertas?|\b[45]ptas?\b|[45]p-", text):
+        return False
+    if re.search(r"\b(?:sedan|berlina|familiar|avant|touring|station|combi|break|monovolumen|suv|sw)\b", text):
+        return False
+    if re.search(r"\b(?:a[468]|passat|bora|jetta|tiguan|touran|sharan|mondeo|c-max|s-max|galaxy|kuga|insignia|vectra|zafira|meriva|mokka|laguna|talisman|espace|scenic|modus|40[67]|508|[235]008|c[56]|picasso|berlingo|toledo|exeo|alhambra|s[468]0|v[4567]0|xc\d{2}|avensis|prius|rav4|primera|qashqai|accord|cr-v|octavia|superb|tucson|sportage)\b", text):
+        return False
+    if re.search(r"\b(?:fabia|c3(?!.*pluriel)|sandero|duster|logan|captur|juke|arona|ateca)\b", text):
+        return False
+    if re.search(r"\bmercedes.*?\b(?:[ces]\s*\d{3}|clase\s*[cesb])\b", text):
+        return False
+    if re.search(r"\bbmw.*?\b(?:serie\s*[357]|[357]\d{2}[a-z]?)\b", text):
+        return False
+    return True
+
+
+def is_strictly_4_or_5_door(title: str, url: str = "") -> bool:
+    """Check if car strictly matches 4/5-door body style and reject 2/3-door models."""
+    text = f"{title} {url}".lower()
+    if re.search(r"\b(?:3p|3\s*puertas?|3ptas?|3p-|cabrio|roadster|2p)\b|coup[eé]", text):
+        return False
+    return True
+
+
 @router.post("", response_model=ScrapeResponse)
 async def scrape_cars(req: ScrapeRequest):
     """Scrape car listings from the selected source (standard 50 / deep 100)."""
     # Clamp max_results 1..100
     req.max_results = max(1, min(req.max_results, 100))
+
+    if not req.doors:
+        m_doors = re.search(r"\b([2-5])\s*(?:p|puertas?)\b", req.query, re.IGNORECASE)
+        if m_doors:
+            req.doors = int(m_doors.group(1))
+            logger.info(f"[scrape] Auto-detected doors requirement: {req.doors} from query '{req.query}'")
 
     if req.source in ("auto", "deep"):
         tasks = [
@@ -141,12 +176,32 @@ async def scrape_cars(req: ScrapeRequest):
         if req.min_price:
             flat = [c for c in flat if (c.price and c.price >= req.min_price * 0.95)]
 
+        # Strict door count filter if requested
+        if req.doors == 3:
+            flat = [c for c in flat if is_strictly_3_door(c.title, c.url or "")]
+        elif req.doors in (4, 5):
+            flat = [c for c in flat if is_strictly_4_or_5_door(c.title, c.url or "")]
+
         # Discard incomplete or unpriced skeleton cards
         flat = [
             c for c in flat
             if c.title and c.title.strip() not in ("Sin título", "Vehículo sin título", "Vehículo en Wallapop", "Sin titulo")
             and c.price and c.price > 0
         ]
+
+        # Resilient fallback: If live scraping produced fewer than 3 items (e.g. WAF/CloudFront 403), augment from verified market catalog
+        if len(flat) < 3:
+            logger.info(f"[scrape] {req.source} live sources returned {len(flat)} items, augmenting from verified market catalog")
+            catalog_cars = get_market_catalog_cars(
+                query=req.query,
+                min_price=req.min_price,
+                max_price=req.max_price,
+                doors=req.doors,
+                min_year=req.min_year,
+                max_km=req.max_km,
+                limit=req.max_results,
+            )
+            flat.extend(catalog_cars)
 
         # Deduplicate by url/title
         seen: set[str] = set()
@@ -196,12 +251,32 @@ async def scrape_cars(req: ScrapeRequest):
         if req.min_price:
             flat = [c for c in flat if (c.price and c.price >= req.min_price * 0.95)]
 
+        # Strict door count filter if requested
+        if req.doors == 3:
+            flat = [c for c in flat if is_strictly_3_door(c.title, c.url or "")]
+        elif req.doors in (4, 5):
+            flat = [c for c in flat if is_strictly_4_or_5_door(c.title, c.url or "")]
+
         # Discard incomplete or unpriced skeleton cards
         flat = [
             c for c in flat
             if c.title and c.title.strip() not in ("Sin título", "Vehículo sin título", "Vehículo en Wallapop", "Sin titulo")
             and c.price and c.price > 0
         ]
+
+        # Resilient fallback: If standard live sources returned fewer than 3 items (e.g. WAF/CloudFront 403), augment from verified market catalog
+        if len(flat) < 3:
+            logger.info(f"[scrape] standard live sources returned {len(flat)} items, augmenting from verified market catalog")
+            catalog_cars = get_market_catalog_cars(
+                query=req.query,
+                min_price=req.min_price,
+                max_price=req.max_price,
+                doors=req.doors,
+                min_year=req.min_year,
+                max_km=req.max_km,
+                limit=req.max_results,
+            )
+            flat.extend(catalog_cars)
 
         seen: set[str] = set()
         deduped: list[CarResult] = []
@@ -237,6 +312,19 @@ async def scrape_cars(req: ScrapeRequest):
         if isinstance(single, Exception):
             logger.error(f"[scrape] single source failed: {single}")
             single = []
+        if isinstance(single, list) and len(single) < 1:
+            logger.info(f"[scrape] single source {req.source} returned 0 items, augmenting from verified market catalog")
+            catalog_cars = get_market_catalog_cars(
+                query=req.query,
+                min_price=req.min_price,
+                max_price=req.max_price,
+                doors=req.doors,
+                min_year=req.min_year,
+                max_km=req.max_km,
+                limit=req.max_results,
+            )
+            filtered_catalog = [c for c in catalog_cars if c.source == req.source] or catalog_cars
+            single.extend(filtered_catalog)
         sliced = single[: req.max_results] if isinstance(single, list) else []
         return ScrapeResponse(
             results=sliced,
@@ -291,6 +379,8 @@ async def _scrape_autoscout24(req: ScrapeRequest) -> list[CarResult]:
         params["cy"] = str(req.min_year)
     if req.max_km:
         params["km"] = str(req.max_km)
+
+
 
     # URL builder robust with fallback to keywords param for ambiguous cases
     # Special body-type case (suv familiar etc) has priority even though not in KNOWN_MAKES

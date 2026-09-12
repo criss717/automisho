@@ -1,40 +1,71 @@
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 import { createAnthropic } from "@ai-sdk/anthropic";
+import { createGoogleGenerativeAI } from "@ai-sdk/google";
 
-const baseURL = process.env.OPENCODE_BASE_URL;
-const apiKey = process.env.OPENCODE_API_KEY;
+export const CHAT_MODEL = process.env.OPENCODE_MODEL || "qwen3.7-plus";
+export const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-2.5-flash";
 
-if (!baseURL) throw new Error("OPENCODE_BASE_URL is not set in .env.local");
-if (!apiKey) throw new Error("OPENCODE_API_KEY is not set in .env.local");
+export function isOpenCodeConfigured(): boolean {
+  return Boolean(process.env.OPENCODE_API_KEY && process.env.OPENCODE_BASE_URL);
+}
+
+export function isGeminiConfigured(): boolean {
+  return Boolean(process.env.GEMINI_API_KEY);
+}
 
 // OpenCode Go tiene dos familias de endpoints según el modelo:
 // - /chat/completions (OpenAI compatible) -> kimi, deepseek, glm, grok...
 // - /messages (Anthropic) -> qwen, minimax...
 // Docs: https://opencode.ai/docs/es/go#endpoints
-export const opencode = createOpenAICompatible({
-  name: "opencode-go",
-  baseURL,
-  apiKey,
-});
-
-export const opencodeAnthropic = createAnthropic({
-  baseURL,
-  apiKey,
-} as unknown as Record<string, unknown>);
-
-export const CHAT_MODEL = process.env.OPENCODE_MODEL || "qwen3.7-plus";
-
-// Helper para elegir el provider correcto según el modelo
 const ANTHROPIC_MODELS = ["qwen", "minimax"];
-export function getChatModel(modelId: string = CHAT_MODEL) {
+
+export function getOpenCodeModel(modelId: string = CHAT_MODEL) {
+  const baseURL = process.env.OPENCODE_BASE_URL || "https://opencode.ai/zen/go/v1";
+  const apiKey = process.env.OPENCODE_API_KEY || "";
   const lower = modelId.toLowerCase();
   const isAnthropic = ANTHROPIC_MODELS.some((p) => lower.includes(p));
+
   if (isAnthropic) {
-    // endpoint https://opencode.ai/zen/go/v1/messages via @ai-sdk/anthropic
+    const opencodeAnthropic = createAnthropic({
+      baseURL,
+      apiKey,
+    } as unknown as Record<string, unknown>);
     return opencodeAnthropic(modelId);
   }
-  // endpoint https://opencode.ai/zen/go/v1/chat/completions via openai-compatible
+
+  const opencode = createOpenAICompatible({
+    name: "opencode-go",
+    baseURL,
+    apiKey,
+  });
   return opencode(modelId);
+}
+
+export function getGeminiModel(modelId: string = GEMINI_MODEL) {
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) {
+    throw new Error("GEMINI_API_KEY is not configured in .env.local");
+  }
+  const google = createGoogleGenerativeAI({
+    apiKey,
+  });
+  return google(modelId);
+}
+
+/**
+ * Obtiene el modelo activo según configuración:
+ * 1. OpenCode Go si está configurado
+ * 2. Google Gemini como fallback si OpenCode no está configurado
+ */
+export function getChatModel(modelId: string = CHAT_MODEL) {
+  if (isOpenCodeConfigured()) {
+    return getOpenCodeModel(modelId);
+  }
+  if (isGeminiConfigured()) {
+    return getGeminiModel(GEMINI_MODEL);
+  }
+  // Retorna OpenCode como fallback por defecto
+  return getOpenCodeModel(modelId);
 }
 
 export const AUTOMISHO_SYSTEM_PROMPT = `Eres AutoMisho, el copiloto IA experto en compraventa y negociación de coches de segunda mano en España.

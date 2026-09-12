@@ -37,6 +37,7 @@ export function detectCarSearch(message: string): {
   query: string;
   maxPrice?: number;
   minPrice?: number;
+  doors?: number;
 } {
   const lower = message.toLowerCase();
   let maxPrice: number | undefined;
@@ -80,6 +81,15 @@ export function detectCarSearch(message: string): {
     if (m && m[1]) maxPrice = parsePriceSmart(m[1], m[0]);
   }
 
+  let doors: number | undefined;
+  if (/\b(?:3|tres)\s*(?:p|puertas?)\b/i.test(lower)) {
+    doors = 3;
+  } else if (/\b(?:5|cinco)\s*(?:p|puertas?)\b/i.test(lower)) {
+    doors = 5;
+  } else if (/\b(?:4|cuatro)\s*(?:p|puertas?)\b/i.test(lower)) {
+    doors = 4;
+  }
+
   const searchKeywords = [
     "coche", "coches", "vehículo", "vehiculos", "car",
     "busco", "buscar", "quiero", "necesito", "hay",
@@ -89,19 +99,24 @@ export function detectCarSearch(message: string): {
     "seat", "volkswagen", "vw", "renault", "peugeot", "toyota",
     "bmw", "mercedes", "ford", "opel", "nissan", "hyundai", "kia",
     "audi", "león", "leon", "ibiza", "golf", "clio", "corolla", "serie", "focus",
+    "puertas", "puerta",
+    "descapotable", "cabrio", "cabriolet", "roadster", "spider", "coupé", "coupe",
+    "rojo", "negro", "blanco", "azul", "gris",
+    "reventa", "revender", "oferton", "ofertones", "chollo", "chollos", "oportunidad", "daño", "dañado", "arreglar", "reparar",
   ];
 
   const hasSearchIntent = searchKeywords.some((kw) => lower.includes(kw));
   const hasPriceOrYear = maxPrice !== undefined || /\b20\d{2}\b/.test(lower);
   const hasKPattern = /\d[\d.,]*\s*k\b/i.test(lower);
+  const hasDoors = doors !== undefined;
   const hasModeloConocido = ["seat", "bmw", "audi", "león", "leon", "ibiza", "golf", "clio", "corolla", "focus", "toyota", "mercedes"].some((m) =>
     lower.includes(m)
   );
 
-  let isSearch = hasSearchIntent || hasPriceOrYear || hasKPattern || hasModeloConocido;
+  let isSearch = hasSearchIntent || hasPriceOrYear || hasKPattern || hasModeloConocido || hasDoors;
   if (hasPriceOrYear && !hasSearchIntent) isSearch = true;
 
-  if (!hasSearchIntent && !maxPrice && !hasKPattern && /\b20\d{2}\b/.test(lower)) {
+  if (!hasSearchIntent && !maxPrice && !hasKPattern && !hasDoors && /\b20\d{2}\b/.test(lower)) {
     isSearch = false;
   }
 
@@ -110,12 +125,35 @@ export function detectCarSearch(message: string): {
     query: message,
     maxPrice,
     minPrice,
+    doors,
   };
 }
 
 import type { CarResult } from "@/types";
 
-export function enrichCarResult(car: Record<string, unknown>, requestedMaxPrice?: number): CarResult {
+export function isCarMatchingDoors(title: string, url: string = "", requestedDoors?: number): boolean {
+  if (!requestedDoors) return true;
+  const text = `${title} ${url}`.toLowerCase();
+  
+  if (requestedDoors === 3) {
+    if (/\b[45]p\b|\b[45]\s*puertas?|\b[45]ptas?\b|[45]p-/i.test(text)) return false;
+    if (/\b(?:sedan|berlina|familiar|avant|touring|station|combi|break|monovolumen|suv|sw)\b/i.test(text)) return false;
+    if (/\b(?:a[468]|passat|bora|jetta|tiguan|touran|sharan|mondeo|c-max|s-max|galaxy|kuga|insignia|vectra|zafira|meriva|mokka|laguna|talisman|espace|scenic|modus|40[67]|508|[235]008|c[56]|picasso|berlingo|toledo|exeo|alhambra|s[468]0|v[4567]0|xc\d{2}|avensis|prius|rav4|primera|qashqai|accord|cr-v|octavia|superb|tucson|sportage)\b/i.test(text)) return false;
+    if (/\b(?:fabia|c3(?!.*pluriel)|sandero|duster|logan|captur|juke|arona|ateca)\b/i.test(text)) return false;
+    if (/\bmercedes.*?\b(?:[ces]\s*\d{3}|clase\s*[cesb])\b/i.test(text)) return false;
+    if (/\bbmw.*?\b(?:serie\s*[357]|[357]\d{2}[a-z]?)\b/i.test(text)) return false;
+    return true;
+  }
+  
+  if (requestedDoors >= 4) {
+    if (/\b(?:3p|3\s*puertas?|3ptas?|3p-|cabrio|roadster|2p)\b|coup[eé]/i.test(text)) return false;
+    return true;
+  }
+  
+  return true;
+}
+
+export function enrichCarResult(car: Record<string, unknown>, requestedMaxPrice?: number, requestedDoors?: number): CarResult {
   const price = typeof car.price === "number" ? car.price : (parseInt(String(car.price || "0").replace(/[^\d]/g, ""), 10) || 0);
   const year = car.year ? (typeof car.year === "number" ? car.year : parseInt(String(car.year), 10) || null) : null;
   const km = car.km ? (typeof car.km === "number" ? car.km : parseInt(String(car.km).replace(/[^\d]/g, ""), 10) || null) : null;
@@ -142,6 +180,26 @@ export function enrichCarResult(car: Record<string, unknown>, requestedMaxPrice?
     }
   } else if (price > 0) {
     pros.push(`Precio competitivo en el mercado actual`);
+  }
+
+  if (requestedDoors !== undefined) {
+    const fullText = `${title} ${url || ""}`.toLowerCase();
+    const matches = isCarMatchingDoors(title, url, requestedDoors);
+    if (!matches) {
+      score -= 50;
+      cons.push(`No cumple tu requisito de ${requestedDoors} puertas`);
+    } else {
+      if (requestedDoors === 3) {
+        const isExplicit3 = /\b3p\b|\b3\s*puertas?|3p-|coupe|coupé/i.test(fullText);
+        if (isExplicit3) {
+          score += 8;
+          pros.push("Carrocería de 3 puertas confirmada");
+        }
+      } else {
+        score += 5;
+        pros.push(`Carrocería de ${requestedDoors} puertas`);
+      }
+    }
   }
 
   if (year && year >= 2018) {
@@ -187,6 +245,13 @@ export function enrichCarResult(car: Record<string, unknown>, requestedMaxPrice?
 
   score = Math.min(98, Math.max(65, score));
 
+  const rawImages = Array.isArray((car as Record<string, unknown>).images)
+    ? ((car as Record<string, unknown>).images as string[]).filter(
+        (u) => typeof u === "string" && u.startsWith("http")
+      )
+    : [];
+  const images = rawImages.length > 0 ? rawImages : image_url ? [image_url] : [];
+
   return {
     title,
     price,
@@ -197,6 +262,8 @@ export function enrichCarResult(car: Record<string, unknown>, requestedMaxPrice?
     source,
     url,
     image_url,
+    images,
+    doors: requestedDoors || ((car as Record<string, unknown>).doors as number | undefined),
     score,
     pros: pros.slice(0, 3),
     cons: cons.slice(0, 2),

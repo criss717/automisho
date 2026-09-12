@@ -7,18 +7,25 @@ import {
 } from "ai";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
-import { CHAT_MODEL, AUTOMISHO_SYSTEM_PROMPT, getChatModel } from "@/lib/ai";
+import {
+  CHAT_MODEL,
+  GEMINI_MODEL,
+  AUTOMISHO_SYSTEM_PROMPT,
+  isOpenCodeConfigured,
+  isGeminiConfigured,
+  getOpenCodeModel,
+  getGeminiModel,
+} from "@/lib/ai";
 import { ChatBody } from "@/lib/validators";
 import { checkRateLimit, rateLimitResponse } from "@/lib/rate-limit";
 
 const BACKEND_URL = process.env.BACKEND_URL || "http://localhost:8000";
 
-// Helpers are centralized in @/lib/chat-helpers for testability and to avoid Next.js route export validation
-import { detectVIN, detectPlate, detectCarSearch, enrichCarResult } from "@/lib/chat-helpers";
+import { detectVIN, detectPlate, detectCarSearch, enrichCarResult, isCarMatchingDoors } from "@/lib/chat-helpers";
 
 import { lookupVehicleDgt } from "@/lib/dgt-client";
 
-async function searchBackend(query: string, maxPrice?: number, minPrice?: number, searchMode: string = "standard") {
+async function searchBackend(query: string, maxPrice?: number, minPrice?: number, searchMode: string = "standard", doors?: number) {
   const controller = new AbortController();
   const timeoutMs = searchMode === "deep" ? 9000 : 6000;
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
@@ -34,6 +41,7 @@ async function searchBackend(query: string, maxPrice?: number, minPrice?: number
         max_results,
         max_price: maxPrice,
         min_price: minPrice,
+        doors,
       }),
       signal: controller.signal,
     });
@@ -129,30 +137,71 @@ export async function POST(req: Request) {
     }
 
     if (search.isSearch) {
-      const searchResults = await searchBackend(search.query, search.maxPrice, search.minPrice, searchMode);
-      console.log("[chat] search results:", searchResults?.total ?? 0, "from", searchResults?.source, "mode:", searchMode, "maxPrice", search.maxPrice);
+      const searchResults = await searchBackend(search.query, search.maxPrice, search.minPrice, searchMode, search.doors);
+      console.log("[chat] search results:", searchResults?.total ?? 0, "from", searchResults?.source, "mode:", searchMode, "maxPrice", search.maxPrice, "doors:", search.doors);
 
       if (searchResults?.results?.length > 0) {
         const enriched = searchResults.results.map((c: Record<string, unknown>) =>
-          enrichCarResult(c, search.maxPrice)
+          enrichCarResult(c, search.maxPrice, search.doors)
         );
 
+        // Strict door filtering on enriched cars if specified
+        let filteredEnriched = enriched;
+        if (search.doors) {
+          filteredEnriched = filteredEnriched.filter((c: { title: string; url?: string }) =>
+            isCarMatchingDoors(c.title, c.url, search.doors)
+          );
+        }
+
         // Sort by score descending to prioritize best value/quality options
-        const sortedEnriched = [...enriched].sort((a, b) => (Number(b.score) || 0) - (Number(a.score) || 0));
+        let sortedEnriched = [...filteredEnriched].sort((a, b) => (Number(b.score) || 0) - (Number(a.score) || 0));
+
+        // Multimodal AI Vision Audit: Inspect photos of candidate cars in real time
+        try {
+          const { auditCarVisuals } = await import("@/lib/vision-auditor");
+          sortedEnriched = await auditCarVisuals(sortedEnriched, {
+            requestedDoors: search.doors,
+            userQuery: userText,
+          });
+        } catch (visionErr) {
+          console.warn("[chat] Vision audit error, proceeding with text metadata:", visionErr);
+        }
 
         const cars = sortedEnriched
           .map(
-            (c: Record<string, unknown>, i: number) =>
-              `${i + 1}. **${c.title}** — ${c.price ? (c.price as number).toLocaleString("es-ES") + "€" : "Precio no disponible"} | ${c.year || "¿?"} | ${c.km ? (c.km as number).toLocaleString("es-ES") + "km" : "¿km?"} | ${c.fuel || ""} | Puntuación IA: ${c.score}/100 | Fuente: ${c.source}${c.url ? ` | ${c.url}` : ""}`
+            (c: Record<string, unknown>, i: number) => {
+              const audit = c.visualAudit as import("@/types").VisualAudit | undefined;
+              const visionParts: string[] = [];
+              if (audit) {
+                if (audit.verified3p) visionParts.push("3p confirmado en foto");
+                else if (audit.doorsDetected) visionParts.push(`${audit.doorsDetected}p en foto`);
+                if (audit.colorDetected) visionParts.push(`Color: ${audit.colorDetected}`);
+                if (audit.bodyTypeDetected) visionParts.push(`Carrocería: ${audit.bodyTypeDetected}`);
+                if (audit.bodyCondition) visionParts.push(`Estado: ${audit.bodyCondition}`);
+                if (audit.criteriaNotes) visionParts.push(`Preferencia: ${audit.criteriaNotes}`);
+                if (audit.flipOpportunity?.flipPotential) {
+                  visionParts.push(
+                    `Oportunidad Reventa: Potencial ${audit.flipOpportunity.flipPotential} (${audit.flipOpportunity.damageSummary || "sin daños graves"})`
+                  );
+                }
+              }
+              const visionInfo = visionParts.length > 0 ? ` | [Visión IA: ${visionParts.join(" | ")}]` : "";
+              return `${i + 1}. **${c.title}** — ${c.price ? (c.price as number).toLocaleString("es-ES") + "€" : "Precio no disponible"} | ${c.year || "¿?"} | ${c.km ? (c.km as number).toLocaleString("es-ES") + "km" : "¿km?"} | ${c.fuel || ""} | Puntuación IA: ${c.score}/100 | Fuente: ${c.source}${visionInfo}${c.url ? ` | ${c.url}` : ""}`;
+            }
           )
           .join("\n");
 
-        contextData += `\n\n## Resultados reales ordenados por puntuación IA (${searchResults.total} coches analizados en el mercado español):\n${cars}\n\nInstrucción de Calidad y Coherencia: Presenta los mejores candidatos tomando estrictamente los primeros N coches de la lista anterior ordenada por puntuación. Tus recomendaciones deben coincidir de forma exacta con los vehículos analizados en el mercado. Para cada coche incluye: Precio, Kilometraje, Año, Combustible, Fuente y enlace [Ver anuncio ↗](url), 1-2 Ventajas reales y 1 Punto a revisar. Concluye SIEMPRE con las 3 preguntas clave para la llamada al vendedor (facturas de distribución/embrague, matrícula exacta o VIN, y motivo de venta).`;
+        const isBroadQuery = !search.doors && !/(?:rojo|negro|blanco|azul|gris|verde|amarillo|cabrio|descapotable|coupe|coupé|familiar|suv|berlina|reventa|revender|chollo)/i.test(userText);
+        const proactiveFilterPrompt = isBroadQuery
+          ? "\n\nPREGUNTA PROACTIVA DE AFINADO (OBLIGATORIA): Como la búsqueda del usuario es abierta o genérica, al final de tu respuesta, pregúntale de forma cercana y proactiva si desea afinar con algún filtro específico: ¿Tiene preferencia por algún color (ej. rojo, negro, blanco...), tipo de carrocería (descapotable, utilitario, familiar, coupé), marca concreta o busca unidades con margen para reventa / negocio?"
+          : "";
+
+        contextData += `\n\n## Resultados reales ordenados por puntuación IA (${sortedEnriched.length} coches analizados en el mercado español):\n${cars}\n\nInstrucción de Calidad y Coherencia: Presenta los mejores candidatos tomando estrictamente los primeros N coches de la lista anterior ordenada por puntuación. Tus recomendaciones deben coincidir de forma exacta con los vehículos analizados en el mercado. Para cada coche incluye: Precio, Kilometraje, Año, Combustible, Fuente y enlace [Ver anuncio ↗](url), 1-2 Ventajas reales y 1 Punto a revisar. Si el coche incluye información de [Visión IA: ...], menciona explícitamente en el texto lo que has auditado visualmente en la fotografía del anuncio (color, tipo de carrocería, estado de chapa/faros, potencial de reventa o daños detectados). Concluye SIEMPRE con las 3 preguntas clave para la llamada al vendedor (facturas de distribución/embrague, matrícula exacta o VIN, y motivo de venta).${proactiveFilterPrompt}${search.doors ? `\n\nREGLA CRÍTICA INQUEBRANTABLE DE CARROCERÍA: El usuario exige ÚNICAMENTE vehículos de ${search.doors} puertas. Queda TERMINANTEMENTE PROHIBIDO recomendar, incluir o mencionar coches de 4 o 5 puertas, ni siquiera como "alternativas" o notas. Recomienda SOLO coches de ${search.doors} puertas.` : ""}`;
 
         // Collect enriched for data block and dashboard
         extraDataCars.push(...sortedEnriched);
       } else {
-        contextData += `\n\n## Búsqueda ejecutada pero sin resultados\nSe buscó "${search.query}"${search.maxPrice ? ` con precio máximo ${search.maxPrice}€` : ""} en el mercado. No se encontraron anuncios actualmente con esos filtros exactos. Informa al usuario con amabilidad y sugiere ajustar la búsqueda (ampliar presupuesto, cambiar marca o modelo).`;
+        contextData += `\n\n## Búsqueda ejecutada pero sin resultados\nSe buscó "${search.query}"${search.maxPrice ? ` con precio máximo ${search.maxPrice}€` : ""}${search.doors ? ` de ${search.doors} puertas` : ""} en el mercado. No se encontraron anuncios actualmente con esos filtros exactos. Informa al usuario con amabilidad y sugiere ajustar la búsqueda (ampliar presupuesto, cambiar marca o modelo).`;
       }
     }
 
@@ -216,150 +265,136 @@ export async function POST(req: Request) {
       try { abortController.abort(); } catch {}
     }, 60000);
 
-    try {
-      const result = streamText({
-        model: getChatModel(CHAT_MODEL),
-        system: systemPrompt,
-        messages: await convertToModelMessages(messages),
-        abortSignal: abortController.signal as unknown as AbortSignal,
-        onFinish: async ({ text }) => {
-          if (llmTimeout) clearTimeout(llmTimeout);
-          if (conversationId && text) {
-            try {
-              const savedText = extraDataCars.length > 0
-                ? `${text}\n\n<!--AUTOMISHO_CARS_DATA:${JSON.stringify(extraDataCars)}-->`
-                : text;
+    // Helper to persist assistant message to DB
+    const persistAssistantMessage = async (text: string) => {
+      if (conversationId && text) {
+        try {
+          const savedText = extraDataCars.length > 0
+            ? `${text}\n\n<!--AUTOMISHO_CARS_DATA:${JSON.stringify(extraDataCars)}-->`
+            : text;
 
-              await prisma.message.create({
-                data: { conversationId, role: "assistant", content: savedText },
-              });
-
-              const msgCount = await prisma.message.count({
-                where: { conversationId },
-              });
-              if (msgCount <= 2 && userText) {
-                const title = userText.slice(0, 80) + (userText.length > 80 ? "..." : "");
-                await prisma.conversation.update({
-                  where: { id: conversationId },
-                  data: { title },
-                });
-              }
-            } catch (err) {
-              console.error("[chat] Failed to save message:", err);
-            }
-          }
-        },
-      });
-
-      const streamId = "msg-" + Date.now();
-      const uiStream = createUIMessageStream({
-        execute: async ({ writer }) => {
-          writer.write({
-            type: "text-start",
-            id: streamId,
+          await prisma.message.create({
+            data: { conversationId, role: "assistant", content: savedText },
           });
 
+          const msgCount = await prisma.message.count({
+            where: { conversationId },
+          });
+          if (msgCount <= 2 && userText) {
+            const title = userText.slice(0, 80) + (userText.length > 80 ? "..." : "");
+            await prisma.conversation.update({
+              where: { id: conversationId },
+              data: { title },
+            });
+          }
+        } catch (err) {
+          console.error("[chat] Failed to save message:", err);
+        }
+      }
+    };
+
+    const modelMessages = await convertToModelMessages(messages);
+    const streamId = "msg-" + Date.now();
+
+    const uiStream = createUIMessageStream({
+      execute: async ({ writer }) => {
+        writer.write({
+          type: "text-start",
+          id: streamId,
+        });
+
+        let fullText = "";
+        let streamSuccess = false;
+
+        // 1. Primary Attempt: OpenCode Go (if configured)
+        if (isOpenCodeConfigured()) {
           try {
-            for await (const chunk of result.textStream) {
+            console.log(`[chat] Attempting primary provider: OpenCode Go (${CHAT_MODEL})`);
+            const openCodeResult = streamText({
+              model: getOpenCodeModel(CHAT_MODEL),
+              system: systemPrompt,
+              messages: modelMessages,
+              abortSignal: abortController.signal as unknown as AbortSignal,
+            });
+
+            for await (const chunk of openCodeResult.textStream) {
+              streamSuccess = true;
+              fullText += chunk;
               writer.write({
                 type: "text-delta",
                 id: streamId,
                 delta: chunk,
               });
             }
-            if (extraDataCars.length > 0) {
+          } catch (openCodeErr) {
+            console.warn("[chat] OpenCode Go failed, checking fallback:", openCodeErr);
+          }
+        }
+
+        // 2. Fallback Attempt: Google Gemini (if OpenCode failed or produced no output)
+        if (!streamSuccess && isGeminiConfigured()) {
+          try {
+            console.log(`[chat] Fallback activated: Using Google Gemini (${GEMINI_MODEL})`);
+            const geminiResult = streamText({
+              model: getGeminiModel(GEMINI_MODEL),
+              system: systemPrompt,
+              messages: modelMessages,
+              abortSignal: abortController.signal as unknown as AbortSignal,
+            });
+
+            for await (const chunk of geminiResult.textStream) {
+              streamSuccess = true;
+              fullText += chunk;
               writer.write({
                 type: "text-delta",
                 id: streamId,
-                delta: `\n\n<!--AUTOMISHO_CARS_DATA:${JSON.stringify(extraDataCars)}-->`,
+                delta: chunk,
               });
             }
-          } catch (streamErr) {
-            console.error("[chat] textStream error:", streamErr);
-          } finally {
-            writer.write({
-              type: "text-end",
-              id: streamId,
-            });
+          } catch (geminiErr) {
+            console.error("[chat] Google Gemini fallback failed:", geminiErr);
           }
-        },
-        onFinish: async () => {
-          if (llmTimeout) clearTimeout(llmTimeout);
-        },
-      });
-
-      const response = createUIMessageStreamResponse({ stream: uiStream });
-      if (extraData) {
-        response.headers.set("x-automisho-cars", encodeURIComponent(JSON.stringify(extraData)));
-      }
-      return response;
-    } catch (llmErr: unknown) {
-      if (llmTimeout) clearTimeout(llmTimeout);
-      const errMsg = llmErr instanceof Error ? llmErr.message : String(llmErr);
-      const errStack = llmErr instanceof Error ? llmErr.stack : undefined;
-      console.error("[chat] LLM streamText failed — falling back to static markdown", {
-        message: errMsg,
-        stack: errStack,
-        model: CHAT_MODEL,
-        conversationId,
-        hasCars: extraDataCars.length > 0,
-        plate,
-        vin,
-      });
-
-      // Fallback: still send data block + static markdown so UI shows cards without error red
-      const fallbackText = generateFallbackMarkdown(extraDataCars);
-
-      // Persist fallback as assistant message so history is consistent
-      if (conversationId) {
-        try {
-          const savedFallback = extraDataCars.length > 0
-            ? `${fallbackText}\n\n<!--AUTOMISHO_CARS_DATA:${JSON.stringify(extraDataCars)}-->`
-            : fallbackText;
-
-          await prisma.message.create({
-            data: { conversationId, role: "assistant", content: savedFallback },
-          });
-          const msgCount = await prisma.message.count({ where: { conversationId } });
-          if (msgCount <= 2 && userText) {
-            const title = userText.slice(0, 80) + (userText.length > 80 ? "..." : "");
-            await prisma.conversation.update({ where: { id: conversationId }, data: { title } });
-          }
-        } catch (persistErr) {
-          console.error("[chat] Failed to persist fallback message:", persistErr);
         }
-      }
 
-      if (extraData) {
-        const fallbackStream = createUIMessageStream({
-          execute: async ({ writer }) => {
-            (writer as unknown as { write: (c: unknown) => void }).write({
-              type: "data",
-              data: extraData,
-              transient: false,
-            });
-            const id = "fallback-" + Date.now();
-            (writer as unknown as { write: (c: unknown) => void }).write({ type: "text-start", id });
-            (writer as unknown as { write: (c: unknown) => void }).write({ type: "text-delta", id, delta: fallbackText });
-            (writer as unknown as { write: (c: unknown) => void }).write({ type: "text-end", id });
-          },
+        // 3. Last Resort Fallback: Static structured markdown
+        if (!streamSuccess) {
+          console.warn("[chat] Both AI providers failed or unconfigured — delivering static fallback");
+          const fallback = generateFallbackMarkdown(extraDataCars);
+          fullText = fallback;
+          writer.write({
+            type: "text-delta",
+            id: streamId,
+            delta: fallback,
+          });
+        }
+
+        // Append structured cars data block for UI/Dashboard
+        if (extraDataCars.length > 0) {
+          writer.write({
+            type: "text-delta",
+            id: streamId,
+            delta: `\n\n<!--AUTOMISHO_CARS_DATA:${JSON.stringify(extraDataCars)}-->`,
+          });
+        }
+
+        writer.write({
+          type: "text-end",
+          id: streamId,
         });
-        const response = createUIMessageStreamResponse({ stream: fallbackStream });
-        response.headers.set("x-automisho-cars", encodeURIComponent(JSON.stringify(extraData)));
-        return response;
-      }
 
-      // No cars: still return a stream with fallback text (200, not 500)
-      const textOnlyStream = createUIMessageStream({
-        execute: async ({ writer }) => {
-          const id = "fallback-" + Date.now();
-          (writer as unknown as { write: (c: unknown) => void }).write({ type: "text-start", id });
-          (writer as unknown as { write: (c: unknown) => void }).write({ type: "text-delta", id, delta: fallbackText });
-          (writer as unknown as { write: (c: unknown) => void }).write({ type: "text-end", id });
-        },
-      });
-      return createUIMessageStreamResponse({ stream: textOnlyStream });
+        // Persist final assistant response to DB
+        await persistAssistantMessage(fullText);
+      },
+      onFinish: async () => {
+        if (llmTimeout) clearTimeout(llmTimeout);
+      },
+    });
+
+    const response = createUIMessageStreamResponse({ stream: uiStream });
+    if (extraData) {
+      response.headers.set("x-automisho-cars", encodeURIComponent(JSON.stringify(extraData)));
     }
+    return response;
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
     const stack = err instanceof Error ? err.stack : undefined;
