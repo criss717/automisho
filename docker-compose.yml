@@ -1,0 +1,96 @@
+version: '3.8'
+
+services:
+  # 1. Base de datos relacional + memoria semántica vectorial (pgvector)
+  automisho-db:
+    image: pgvector/pgvector:pg16
+    container_name: automisho-db
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-automisho}
+      POSTGRES_USER: ${POSTGRES_USER:-automisho}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-automisho_secret}
+    volumes:
+      - automisho_pgdata:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    restart: unless-stopped
+    networks:
+      - automisho-internal
+
+  # 2. Cola Redis para tareas asíncronas y Task Memory
+  automisho-redis:
+    image: redis:7-alpine
+    container_name: automisho-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - automisho_redisdata:/data
+    restart: unless-stopped
+    networks:
+      - automisho-internal
+
+  # 3. Worker Playwright aislado (Chromium headless + anti-bot stealth)
+  automisho-browser:
+    build:
+      context: ./server/browser_worker
+      dockerfile: Dockerfile
+    container_name: automisho-browser
+    shm_size: '2gb'
+    ports:
+      - "3001:3000"
+    restart: unless-stopped
+    networks:
+      - automisho-internal
+
+  # 4. Orquestador Agéntico Core (FastAPI + Muse Spark 1.3 via CC + Sentinel)
+  automisho-orchestrator:
+    build:
+      context: ./server
+      dockerfile: Dockerfile
+    container_name: automisho-orchestrator
+    environment:
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-automisho}:${POSTGRES_PASSWORD:-automisho_secret}@automisho-db:5432/${POSTGRES_DB:-automisho}
+      - REDIS_URL=redis://automisho-redis:6379/0
+      - BROWSER_SERVICE_URL=http://automisho-browser:3000
+      - COMMANDCODE_BASE_URL=${COMMANDCODE_BASE_URL:-https://api.commandcode.ai/provider/v1}
+      - COMMANDCODE_API_KEY=${COMMANDCODE_API_KEY}
+      - SENTINEL_SECRET=${SENTINEL_SECRET:-automisho_sentinel_secret_change_me}
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
+    ports:
+      - "8000:8000"
+    depends_on:
+      - automisho-db
+      - automisho-redis
+      - automisho-browser
+    restart: unless-stopped
+    networks:
+      - automisho-internal
+
+  # 5. Frontend Next.js 16 (Copilot Workspace)
+  automisho-front:
+    build:
+      context: ./front
+      dockerfile: Dockerfile
+    container_name: automisho-front
+    environment:
+      - BACKEND_URL=http://automisho-orchestrator:8000
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-automisho}:${POSTGRES_PASSWORD:-automisho_secret}@automisho-db:5432/${POSTGRES_DB:-automisho}
+      - NEXTAUTH_URL=http://localhost:3000
+      - NEXTAUTH_SECRET=${NEXTAUTH_SECRET:-automisho_jwt_secret_dev}
+      - COMMANDCODE_API_KEY=${COMMANDCODE_API_KEY}
+      - COMMANDCODE_BASE_URL=${COMMANDCODE_BASE_URL:-https://api.commandcode.ai/provider/v1}
+    ports:
+      - "3000:3000"
+    depends_on:
+      - automisho-orchestrator
+    restart: unless-stopped
+    networks:
+      - automisho-internal
+
+networks:
+  automisho-internal:
+    driver: bridge
+
+volumes:
+  automisho_pgdata:
+  automisho_redisdata:
