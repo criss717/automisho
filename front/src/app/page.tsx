@@ -34,7 +34,7 @@ export default function HomePage() {
   }, []);
 
   return (
-    <main className="relative bg-forest-depths min-h-screen">
+    <main className="relative bg-parchment text-charcoal min-h-screen selection:bg-signal-blue/15">
       <Navbar />
       <Hero />
       <HowItWorks />

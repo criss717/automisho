@@ -7,10 +7,38 @@ import logging
 import asyncio
 from urllib.parse import quote
 import json
-from data.market_catalog import get_market_catalog_cars
-
 logger = logging.getLogger("scrape")
 router = APIRouter(prefix="/scrape", tags=["scraping"])
+
+def is_valid_car_image(url: str | None) -> bool:
+    """Filter out non-car images: dealer logos, banners, placeholders, SVGs, dealer watermarks."""
+    if not url or not isinstance(url, str):
+        return False
+    u = url.lower().strip()
+    if not u.startswith("http"):
+        return False
+    if u.endswith(".svg") or ".svg?" in u:
+        return False
+    blacklist = (
+        "ladonnaemobile",
+        "multimarca",
+        "concesionario",
+        "dealer",
+        "logo",
+        "banner",
+        "watermark",
+        "placeholder",
+        "avatar",
+        "icon",
+        "badge",
+        "static.wallapop.com/images/icons",
+        "static-cochesnet",
+        "seller-logo",
+        "dealer-logo",
+        "unsplash.com",
+    )
+    return not any(term in u for term in blacklist)
+
 
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
@@ -189,20 +217,6 @@ async def scrape_cars(req: ScrapeRequest):
             and c.price and c.price > 0
         ]
 
-        # Resilient fallback: If live scraping produced fewer than 3 items (e.g. WAF/CloudFront 403), augment from verified market catalog
-        if len(flat) < 3:
-            logger.info(f"[scrape] {req.source} live sources returned {len(flat)} items, augmenting from verified market catalog")
-            catalog_cars = get_market_catalog_cars(
-                query=req.query,
-                min_price=req.min_price,
-                max_price=req.max_price,
-                doors=req.doors,
-                min_year=req.min_year,
-                max_km=req.max_km,
-                limit=req.max_results,
-            )
-            flat.extend(catalog_cars)
-
         # Deduplicate by url/title
         seen: set[str] = set()
         deduped: list[CarResult] = []
@@ -264,20 +278,6 @@ async def scrape_cars(req: ScrapeRequest):
             and c.price and c.price > 0
         ]
 
-        # Resilient fallback: If standard live sources returned fewer than 3 items (e.g. WAF/CloudFront 403), augment from verified market catalog
-        if len(flat) < 3:
-            logger.info(f"[scrape] standard live sources returned {len(flat)} items, augmenting from verified market catalog")
-            catalog_cars = get_market_catalog_cars(
-                query=req.query,
-                min_price=req.min_price,
-                max_price=req.max_price,
-                doors=req.doors,
-                min_year=req.min_year,
-                max_km=req.max_km,
-                limit=req.max_results,
-            )
-            flat.extend(catalog_cars)
-
         seen: set[str] = set()
         deduped: list[CarResult] = []
         for c in flat:
@@ -312,19 +312,6 @@ async def scrape_cars(req: ScrapeRequest):
         if isinstance(single, Exception):
             logger.error(f"[scrape] single source failed: {single}")
             single = []
-        if isinstance(single, list) and len(single) < 1:
-            logger.info(f"[scrape] single source {req.source} returned 0 items, augmenting from verified market catalog")
-            catalog_cars = get_market_catalog_cars(
-                query=req.query,
-                min_price=req.min_price,
-                max_price=req.max_price,
-                doors=req.doors,
-                min_year=req.min_year,
-                max_km=req.max_km,
-                limit=req.max_results,
-            )
-            filtered_catalog = [c for c in catalog_cars if c.source == req.source] or catalog_cars
-            single.extend(filtered_catalog)
         sliced = single[: req.max_results] if isinstance(single, list) else []
         return ScrapeResponse(
             results=sliced,
@@ -452,16 +439,26 @@ async def _scrape_autoscout24(req: ScrapeRequest) -> list[CarResult]:
                 if not link or link == "https://www.autoscout24.es" or link == "https://www.autoscout24.es/":
                     link = f"https://www.autoscout24.es/lst?keywords={quote(title)}&priceto={price or ''}"
 
-            # image_url
-            img_el = item.select_one("img")
-            image_url = None
-            if img_el:
-                image_url = img_el.get("src") or img_el.get("data-src") or img_el.get("data-srcset")
-                if image_url and image_url.startswith("//"):
-                    image_url = "https:" + image_url
-                # handle srcset picking first
-                if image_url and "," in image_url:
-                    image_url = image_url.split(",")[0].strip().split(" ")[0]
+            # image_url and all images extraction (strictly authentic car photos, no dealer logos/banners)
+            all_imgs: list[str] = []
+            for img in item.select("img"):
+                src = img.get("src") or img.get("data-src") or img.get("data-srcset")
+                if src and src.startswith("//"):
+                    src = "https:" + src
+                if src and "," in src:
+                    src = src.split(",")[0].strip().split(" ")[0]
+                if src and is_valid_car_image(src) and src not in all_imgs:
+                    all_imgs.append(src)
+            for pic in item.select("picture source"):
+                srcset = pic.get("srcset") or pic.get("data-srcset")
+                if srcset:
+                    first_src = srcset.split(",")[0].strip().split(" ")[0]
+                    if first_src.startswith("//"):
+                        first_src = "https:" + first_src
+                    if first_src and is_valid_car_image(first_src) and first_src not in all_imgs:
+                        all_imgs.append(first_src)
+
+            image_url = all_imgs[0] if all_imgs else None
 
             details = item.select("[class*='vehicleDetails'] span")
             km, year, fuel = None, None, None
@@ -476,7 +473,7 @@ async def _scrape_autoscout24(req: ScrapeRequest) -> list[CarResult]:
 
             results.append(CarResult(
                 title=title, price=price, year=year, km=km, fuel=fuel,
-                url=link, image_url=image_url, source="autoscout24",
+                url=link, image_url=image_url, images=all_imgs, source="autoscout24",
             ))
 
         return results
@@ -574,14 +571,26 @@ async def _scrape_cochesnet(req: ScrapeRequest) -> list[CarResult]:
         if not link or link == "https://www.coches.net" or link == "https://www.coches.net/":
             link = f"https://www.coches.net/segunda-mano/?Keywords={quote(title)}&MaxPrice={price or ''}"
 
-        img_el = item.select_one("img")
-        image_url = None
-        if img_el:
-            image_url = img_el.get("src") or img_el.get("data-src") or img_el.get("data-srcset")
-            if image_url and image_url.startswith("//"):
-                image_url = "https:" + image_url
-            if image_url and "," in image_url:
-                image_url = image_url.split(",")[0].strip().split(" ")[0]
+        # image_url and all images extraction (strictly authentic car photos, no dealer logos/banners)
+        all_imgs: list[str] = []
+        for img in item.select("img"):
+            src = img.get("src") or img.get("data-src") or img.get("data-srcset")
+            if src and src.startswith("//"):
+                src = "https:" + src
+            if src and "," in src:
+                src = src.split(",")[0].strip().split(" ")[0]
+            if src and is_valid_car_image(src) and src not in all_imgs:
+                all_imgs.append(src)
+        for pic in item.select("picture source"):
+            srcset = pic.get("srcset") or pic.get("data-srcset")
+            if srcset:
+                first_src = srcset.split(",")[0].strip().split(" ")[0]
+                if first_src.startswith("//"):
+                    first_src = "https:" + first_src
+                if first_src and is_valid_car_image(first_src) and first_src not in all_imgs:
+                    all_imgs.append(first_src)
+
+        image_url = all_imgs[0] if all_imgs else None
 
         attrs = item.select(".mt-CardAd-attrItem")
         km, year, fuel = None, None, None
@@ -596,7 +605,7 @@ async def _scrape_cochesnet(req: ScrapeRequest) -> list[CarResult]:
 
         results.append(CarResult(
             title=title, price=price, year=year, km=km, fuel=fuel,
-            url=link, image_url=image_url, source="coches.net",
+            url=link, image_url=image_url, images=all_imgs, source="coches.net",
         ))
 
     return results
@@ -703,14 +712,18 @@ async def _scrape_wallapop(req: ScrapeRequest) -> list[CarResult]:
                 loc = item.get("location") or {}
                 if isinstance(loc, dict):
                     location = loc.get("city", "") or loc.get("cityName", "")
-                images = item.get("images") or []
-                image_url = None
-                if images and isinstance(images, list):
-                    first = images[0]
-                    if isinstance(first, dict):
-                        image_url = first.get("original") or first.get("url") or first.get("xlarge")
-                    elif isinstance(first, str):
-                        image_url = first
+                raw_images = item.get("images") or []
+                all_imgs: list[str] = []
+                if isinstance(raw_images, list):
+                    for img_item in raw_images:
+                        if isinstance(img_item, dict):
+                            u = img_item.get("original") or img_item.get("url") or img_item.get("xlarge") or img_item.get("large")
+                            if u and isinstance(u, str) and is_valid_car_image(u) and u not in all_imgs:
+                                all_imgs.append(u)
+                        elif isinstance(img_item, str) and is_valid_car_image(img_item) and img_item not in all_imgs:
+                            all_imgs.append(img_item)
+
+                image_url = all_imgs[0] if all_imgs else None
                 web_slug = item.get("web_slug") or item.get("id") or ""
                 url_item = f"https://es.wallapop.com/item/{web_slug}" if web_slug else ""
                 results.append(CarResult(
@@ -722,6 +735,7 @@ async def _scrape_wallapop(req: ScrapeRequest) -> list[CarResult]:
                     location=location,
                     url=url_item,
                     image_url=image_url,
+                    images=all_imgs,
                     source="wallapop",
                 ))
             if results:
@@ -749,6 +763,8 @@ async def _scrape_wallapop(req: ScrapeRequest) -> list[CarResult]:
                 image_url = "https:" + image_url
             if image_url and image_url.startswith("/"):
                 image_url = "https://es.wallapop.com" + image_url
+            if not is_valid_car_image(image_url):
+                image_url = None
 
         href = link_el["href"] if link_el and link_el.get("href") else ""
         if href and not href.startswith("http"):
@@ -880,16 +896,30 @@ async def _scrape_milanuncios(req: ScrapeRequest) -> list[CarResult]:
             if not link or link == "https://www.milanuncios.com" or link == "https://www.milanuncios.com/":
                 link = f"https://www.milanuncios.com/coches-de-segunda-mano/?keywords={quote(title)}&precio-hasta={price or ''}"
 
-            img_el = item.select_one("img")
-            image_url = None
-            if img_el:
-                image_url = img_el.get("src") or img_el.get("data-src") or img_el.get("data-srcset") or img_el.get("data-original")
-                if image_url and image_url.startswith("//"):
-                    image_url = "https:" + image_url
-                if image_url and image_url.startswith("/"):
-                    image_url = "https://www.milanuncios.com" + image_url
-                if image_url and "," in image_url:
-                    image_url = image_url.split(",")[0].strip().split(" ")[0]
+            # image_url and all images extraction (strictly authentic car photos, no dealer logos/banners)
+            all_imgs: list[str] = []
+            for img in item.select("img"):
+                src = img.get("src") or img.get("data-src") or img.get("data-srcset") or img.get("data-original")
+                if src and src.startswith("//"):
+                    src = "https:" + src
+                elif src and src.startswith("/"):
+                    src = "https://www.milanuncios.com" + src
+                if src and "," in src:
+                    src = src.split(",")[0].strip().split(" ")[0]
+                if src and is_valid_car_image(src) and src not in all_imgs:
+                    all_imgs.append(src)
+            for pic in item.select("picture source"):
+                srcset = pic.get("srcset") or pic.get("data-srcset")
+                if srcset:
+                    first_src = srcset.split(",")[0].strip().split(" ")[0]
+                    if first_src.startswith("//"):
+                        first_src = "https:" + first_src
+                    elif first_src.startswith("/"):
+                        first_src = "https://www.milanuncios.com" + first_src
+                    if first_src and is_valid_car_image(first_src) and first_src not in all_imgs:
+                        all_imgs.append(first_src)
+
+            image_url = all_imgs[0] if all_imgs else None
 
             # Try to extract year/km from details
             details_text = item.get_text(" ", strip=True)
@@ -918,7 +948,7 @@ async def _scrape_milanuncios(req: ScrapeRequest) -> list[CarResult]:
 
             results.append(CarResult(
                 title=title, price=price, year=year, km=km, fuel=fuel,
-                url=link, image_url=image_url, source="milanuncios",
+                url=link, image_url=image_url, images=all_imgs, source="milanuncios",
             ))
 
         return results

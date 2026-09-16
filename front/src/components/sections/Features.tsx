@@ -7,107 +7,98 @@ import FeatureIcon from "../icons/FeatureIcons";
 const features = [
   {
     icon: "ai-advisor",
-    title: "IA Asesora",
+    title: "IA Asesora con Visión",
     description:
-      "Habla en lenguaje natural. AutoMisho entiende tu presupuesto, uso preferido y te da recomendaciones personalizadas.",
+      "Habla en lenguaje natural. AutoMisho entiende tu presupuesto, uso diario y analiza las fotos de los anuncios para detectar 3p/5p y estado exterior.",
     tag: "Core",
   },
   {
     icon: "multi-source",
     title: "Scraping Multi-Fuente",
     description:
-      "Busca simultáneamente en AutoScout24, coches.net y más. Una sola búsqueda, todas las opciones.",
+      "Busca simultáneamente en AutoScout24, coches.net, Wallapop y Milanuncios. Una sola consulta escanea todo el mercado nacional.",
     tag: "Datos",
   },
   {
     icon: "vehicle-history",
-    title: "Historial Verificado",
+    title: "Historial DGT y VIN",
     description:
-      "Integración con carVertical para verificar robos, accidentes, kilómetros y propietarios anteriores.",
+      "Integración oficial con InfoCoche para emitir informes completos DGT en PDF y decodificador de bastidor ISO 3779.",
     tag: "Seguridad",
   },
   {
     icon: "alerts",
-    title: "Alertas Rojas",
+    title: "Detección de Alertas",
     description:
-      "Detecta precios sospechosos, km inconsistentes, vendedores con múltiples listings y descripciones engañosas.",
+      "Detecta precios sospechosos, descripciones engañosas, anuncios duplicados y discrepancias de kilómetros antes de contactar.",
     tag: "Protección",
   },
   {
     icon: "comparison",
-    title: "Comparación Inteligente",
+    title: "Comparador Inteligente",
     description:
-      "Compara coches lado a lado con análisis de precio justo, fiabilidad del modelo y coste total de propiedad.",
+      "Compara candidatos con una puntuación global objetiva (0-100), pros y contras técnicos, y coste estimado de averías comunes.",
     tag: "Análisis",
   },
   {
     icon: "price-analysis",
-    title: "Análisis de Mercado",
+    title: "Oportunidades de Reventa",
     description:
-      "¿Es buen precio? AutoMisho compara con el mercado actual y te dice si es una ganga o está sobrevalorado.",
-    tag: "Valor",
+      "Evalúa chollos y coches con desperfectos leves que puedes reparar fácilmente para reventa con beneficio estimado.",
+    tag: "Inversión",
   },
 ];
 
 export default function Features() {
   const sectionRef = useRef<HTMLElement>(null);
-  const isInView = useInView(sectionRef, { once: true, margin: "-100px" });
+  const isInView = useInView(sectionRef, { once: true, margin: "-80px" });
 
   return (
     <section
       ref={sectionRef}
       id="features"
-      className="section relative"
+      className="max-w-6xl mx-auto px-4 py-20 sm:py-28"
     >
-      {/* Background accent */}
-      <div className="absolute inset-0 pointer-events-none">
-        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[600px] bg-shadow-teal/20 rounded-full blur-[120px]" />
-      </div>
-
       {/* Section Header */}
       <motion.div
-        initial={{ opacity: 0, y: 30 }}
+        initial={{ opacity: 0, y: 20 }}
         animate={isInView ? { opacity: 1, y: 0 } : {}}
-        transition={{ duration: 0.8 }}
-        className="section-header relative z-10"
+        transition={{ duration: 0.6 }}
+        className="text-center mb-16"
       >
-        <p className="section-eyebrow">Funciones</p>
-        <h2 className="section-title">
-          Todo lo que necesitas para comprar con confianza
+        <p className="text-xs uppercase tracking-widest text-ash font-medium mb-3">
+          Capacidades del Sistema
+        </p>
+        <h2 className="text-heading sm:text-heading-lg text-graphite font-normal max-w-2xl mx-auto">
+          Todo lo que necesitas para comprar un coche con total certeza
         </h2>
       </motion.div>
 
       {/* Features Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 relative z-10">
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
         {features.map((feature, index) => (
           <motion.div
             key={feature.title}
             initial={{ opacity: 0, y: 30 }}
             animate={isInView ? { opacity: 1, y: 0 } : {}}
-            transition={{ duration: 0.5, delay: index * 0.1 }}
-            className="card group relative overflow-hidden"
+            transition={{ duration: 0.5, delay: index * 0.08 }}
+            className="card group flex flex-col justify-between p-7 hover:-translate-y-1 transition-all"
           >
-            {/* Hover glow effect */}
-            <div className="absolute inset-0 bg-gradient-to-br from-mint-glow/5 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-500" />
-
-            <div className="relative z-10">
-              {/* Tag */}
-              <span className="tag text-caption mb-4 inline-flex">
-                {feature.tag}
-              </span>
-
-              {/* Icon */}
-              <div className="w-12 h-12 text-mint-glow mb-4">
-                <FeatureIcon name={feature.icon} size={48} />
+            <div>
+              <div className="flex items-center justify-between mb-6">
+                <div className="w-12 h-12 rounded-xl bg-linen border border-mist flex items-center justify-center text-signal-blue group-hover:text-cerulean transition-colors">
+                  <FeatureIcon name={feature.icon} size={28} />
+                </div>
+                <span className="tag text-[11px] text-ash">
+                  {feature.tag}
+                </span>
               </div>
 
-              {/* Title */}
-              <h3 className="text-subheading text-pure-light font-teodor mb-2">
+              <h3 className="font-ppmondwest text-xl text-graphite font-normal mb-2.5">
                 {feature.title}
               </h3>
 
-              {/* Description */}
-              <p className="text-body-sm text-mist-gray leading-relaxed">
+              <p className="text-charcoal text-sm leading-relaxed font-normal">
                 {feature.description}
               </p>
             </div>

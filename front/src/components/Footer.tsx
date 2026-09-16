@@ -1,5 +1,8 @@
 "use client";
 
+import Link from "next/link";
+import AutoMishoCat from "./icons/AutoMishoCat";
+
 const footerLinks = [
   {
     title: "Producto",
@@ -7,54 +10,71 @@ const footerLinks = [
       { label: "Cómo funciona", href: "#how-it-works" },
       { label: "Funciones", href: "#features" },
       { label: "Precios", href: "#pricing" },
-      { label: "Demo", href: "#demo" },
+      { label: "Demo interactiva", href: "#demo" },
     ],
   },
   {
     title: "Legal",
     links: [
       { label: "Privacidad", href: "#" },
-      { label: "Términos", href: "#" },
-      { label: "Cookies", href: "#" },
+      { label: "Términos de uso", href: "#" },
+      { label: "Política de Cookies", href: "#" },
     ],
   },
   {
     title: "Contacto",
     links: [
-      { label: "Soporte", href: "#" },
-      { label: "Twitter", href: "#" },
-      { label: "Instagram", href: "#" },
+      { label: "Soporte al comprador", href: "#" },
+      { label: "Comunidad", href: "#" },
+      { label: "info@automisho.es", href: "mailto:info@automisho.es" },
     ],
   },
 ];
 
 export default function Footer() {
   return (
-    <footer style={{ borderTop: "1px solid var(--color-midnight-tide)" }}>
-      <div style={{ maxWidth: "1200px", margin: "0 auto", padding: "64px 2rem 48px" }}>
-        {/* Top section */}
-        <div style={{ display: "grid", gridTemplateColumns: "1.5fr 1fr 1fr 1fr", gap: "2rem", marginBottom: "48px" }}>
-          {/* Brand */}
+    <footer className="bg-paper border-t border-mist mt-16">
+      <div className="max-w-6xl mx-auto px-4 py-16 sm:py-20">
+        {/* Editorial Statement */}
+        <div className="mb-14 pb-12 border-b border-mist max-w-2xl">
+          <p className="font-ppmondwest text-2xl sm:text-3xl text-graphite font-normal leading-snug tracking-tight mb-3">
+            “El mercado del automóvil de segunda mano no necesita más anuncios confusos; necesita criterio honesto, ojos atentos y datos verificados.”
+          </p>
+          <span className="text-xs text-ash tracking-wide uppercase font-medium">
+            AutoMisho — Cuaderno editorial de inteligencia artificial
+          </span>
+        </div>
+
+        {/* Links Grid */}
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-10 mb-12">
+          {/* Brand Col */}
           <div>
-            <a href="#" style={{ display: "flex", alignItems: "center", gap: "12px", textDecoration: "none", marginBottom: "16px" }}>
-              <img src="/assets/hero_logo.svg" alt="AutoMisho" style={{ width: "36px", height: "36px", objectFit: "contain" }} />
-              <span style={{ color: "var(--color-pure-light)", fontSize: "18px", fontWeight: 400 }}>AutoMisho</span>
-            </a>
-            <p style={{ color: "var(--color-mist-gray)", fontSize: "14px", lineHeight: 1.6, maxWidth: "240px" }}>
-              Tu copiloto IA para comprar coches de segunda mano con confianza.
+            <Link href="/" className="flex items-center gap-2.5 mb-4 group text-decoration-none">
+              <div className="w-8 h-8 rounded-full border border-mist bg-linen flex items-center justify-center overflow-hidden">
+                <AutoMishoCat size={24} interactive={false} />
+              </div>
+              <span className="font-ppmondwest text-xl text-graphite font-normal">
+                AutoMisho
+              </span>
+            </Link>
+            <p className="text-sm text-ash leading-relaxed max-w-xs font-normal">
+              Tu copiloto con visión artificial y acceso a portales y datos de la DGT para comprar con tranquilidad.
             </p>
           </div>
 
-          {/* Link columns */}
+          {/* Columns */}
           {footerLinks.map((group) => (
             <div key={group.title}>
-              <h4 style={{ color: "var(--color-pure-light)", fontSize: "12px", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.1em", marginBottom: "16px" }}>
+              <h4 className="text-xs font-medium text-graphite uppercase tracking-wider mb-4">
                 {group.title}
               </h4>
-              <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>
+              <ul className="space-y-2.5">
                 {group.links.map((link) => (
-                  <li key={link.label} style={{ marginBottom: "10px" }}>
-                    <a href={link.href} style={{ color: "var(--color-mist-gray)", fontSize: "14px", textDecoration: "none" }}>
+                  <li key={link.label}>
+                    <a
+                      href={link.href}
+                      className="text-sm text-charcoal hover:text-ink-black transition-colors"
+                    >
                       {link.label}
                     </a>
                   </li>
@@ -64,10 +84,12 @@ export default function Footer() {
           ))}
         </div>
 
-        {/* Bottom bar */}
-        <div style={{ borderTop: "1px solid var(--color-midnight-tide)", paddingTop: "24px", display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "12px" }}>
-          <p style={{ color: "var(--color-mist-gray)", fontSize: "12px" }}>© 2026 AutoMisho. Todos los derechos reservados.</p>
-          <p style={{ color: "var(--color-mist-gray)", fontSize: "12px" }}>Hecho con <span style={{ color: "var(--color-mint-glow)" }}>♥</span> en España</p>
+        {/* Colophon & Bottom Bar */}
+        <div className="border-t border-mist pt-6 flex flex-wrap justify-between items-center gap-4 text-xs text-ash">
+          <p>© {new Date().getFullYear()} AutoMisho Inc. Todos los derechos reservados.</p>
+          <p className="flex items-center gap-1">
+            Diseñado con precisión editorial en España
+          </p>
         </div>
       </div>
     </footer>

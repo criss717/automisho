@@ -166,7 +166,7 @@ export default function ChatWindow({
   };
 
   return (
-    <div className="flex flex-col h-full min-h-0 overflow-hidden bg-forest-depths">
+    <div className="flex flex-col h-full min-h-0 overflow-hidden bg-parchment text-charcoal">
       <div className="flex-1 min-h-0 overflow-hidden flex flex-col">
         <MessageList
           messages={messages}
@@ -175,9 +175,7 @@ export default function ChatWindow({
         />
       </div>
 
-
-
-      <div className="shrink-0 border-t border-midnight-tide bg-forest-depths/95 backdrop-blur-sm">
+      <div className="shrink-0 border-t border-mist bg-paper/95 backdrop-blur-sm">
         <MessageInput
           value={input}
           onChange={setInput}

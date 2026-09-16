@@ -28,7 +28,7 @@ function renderInline(text: string): React.ReactNode {
     const token = match[0];
     if (token.startsWith("**") && token.endsWith("**")) {
       parts.push(
-        <strong key={keyIdx++} className="font-semibold text-pure-light">
+        <strong key={keyIdx++} className="font-semibold text-graphite">
           {token.slice(2, -2)}
         </strong>
       );
@@ -41,7 +41,7 @@ function renderInline(text: string): React.ReactNode {
             href={linkMatch[2]}
             target="_blank"
             rel="noopener noreferrer"
-            className="text-mint-glow underline underline-offset-2 hover:text-pure-light transition-colors font-medium"
+            className="text-signal-blue underline underline-offset-2 hover:text-ink-black transition-colors font-medium"
           >
             {linkMatch[1]} ↗
           </a>
@@ -64,25 +64,25 @@ function FormattedContent({ text }: { text: string }) {
   const lines = text.split("\n");
 
   return (
-    <div className="space-y-1.5 leading-relaxed text-sm">
+    <div className="space-y-1.5 leading-relaxed text-sm text-charcoal">
       {lines.map((line, idx) => {
         const trimmed = line.trim();
         if (!trimmed) {
           return <div key={idx} className="h-1" />;
         }
         if (trimmed === "---") {
-          return <hr key={idx} className="border-white/10 my-2" />;
+          return <hr key={idx} className="border-mist my-2" />;
         }
         if (trimmed.startsWith("#### ")) {
           return (
-            <h4 key={idx} className="text-sm font-semibold text-pure-light mt-3 mb-1 font-teodor tracking-wide">
+            <h4 key={idx} className="text-sm font-semibold text-graphite mt-3 mb-1 font-ppmondwest tracking-wide">
               {renderInline(trimmed.replace(/^####\s+/, ""))}
             </h4>
           );
         }
         if (trimmed.startsWith("### ")) {
           return (
-            <h3 key={idx} className="text-base font-semibold text-mint-glow mt-3 mb-1 font-teodor">
+            <h3 key={idx} className="text-base font-semibold text-graphite mt-3 mb-1 font-ppmondwest">
               {renderInline(trimmed.replace(/^###\s+/, ""))}
             </h3>
           );
@@ -90,13 +90,13 @@ function FormattedContent({ text }: { text: string }) {
         if (trimmed.startsWith("- ") || trimmed.startsWith("* ")) {
           return (
             <div key={idx} className="flex items-start gap-2 pl-1">
-              <span className="text-mint-glow font-bold shrink-0 mt-0.5">•</span>
-              <span className="text-mist-gray/90 flex-1">{renderInline(trimmed.replace(/^[-*]\s+/, ""))}</span>
+              <span className="text-signal-blue font-bold shrink-0 mt-0.5">•</span>
+              <span className="text-charcoal flex-1">{renderInline(trimmed.replace(/^[-*]\s+/, ""))}</span>
             </div>
           );
         }
         return (
-          <p key={idx} className="text-mist-gray/90">
+          <p key={idx} className="text-charcoal leading-relaxed">
             {renderInline(line)}
           </p>
         );
@@ -131,8 +131,8 @@ export default function MessageBubble({
           <div
             className={`px-4 py-3 text-sm leading-relaxed ${
               isUser
-                ? "bg-mint-glow text-forest-depths font-medium rounded-2xl rounded-br-sm shadow-sm"
-                : "glass-card bg-shadow-teal/40 text-pure-light/90 rounded-2xl rounded-bl-sm border border-white/6 shadow-md"
+                ? "bg-mint-glow text-white font-medium rounded-2xl rounded-br-sm shadow-subtle border border-signal-blue/20"
+                : "glass-card bg-shadow-teal text-charcoal rounded-2xl rounded-bl-sm border border-mist shadow-subtle"
             }`}
           >
             {isUser ? (
@@ -141,7 +141,7 @@ export default function MessageBubble({
               <FormattedContent text={displayContent} />
             )}
             {isStreaming && (
-              <span className="inline-block w-1.5 h-3.5 ml-1 bg-mint-glow/80 animate-pulse rounded-sm align-middle" />
+              <span className="inline-block w-1.5 h-3.5 ml-1 bg-signal-blue animate-pulse rounded-sm align-middle" />
             )}
           </div>
         )}

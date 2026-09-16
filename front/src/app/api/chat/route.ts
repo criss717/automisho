@@ -21,7 +21,7 @@ import { checkRateLimit, rateLimitResponse } from "@/lib/rate-limit";
 
 const BACKEND_URL = process.env.BACKEND_URL || "http://localhost:8000";
 
-import { detectVIN, detectPlate, detectCarSearch, enrichCarResult, isCarMatchingDoors } from "@/lib/chat-helpers";
+import { detectVIN, detectPlate, detectCarSearch, enrichCarResult, isCarMatchingDoors, isCarMatchingColor } from "@/lib/chat-helpers";
 
 import { lookupVehicleDgt } from "@/lib/dgt-client";
 
@@ -153,6 +153,17 @@ export async function POST(req: Request) {
           );
         }
 
+        // Color filtering before vision audit (title-based check)
+        if (search.colors && search.colors.length > 0) {
+          const colorMatched = filteredEnriched.filter((c: { title: string }) =>
+            isCarMatchingColor(c.title, search.colors)
+          );
+          // Only apply strict pre-filter if it doesn't discard all cars (in case colors are only visible in photos)
+          if (colorMatched.length > 0) {
+            filteredEnriched = colorMatched;
+          }
+        }
+
         // Sort by score descending to prioritize best value/quality options
         let sortedEnriched = [...filteredEnriched].sort((a, b) => (Number(b.score) || 0) - (Number(a.score) || 0));
 
@@ -163,6 +174,17 @@ export async function POST(req: Request) {
             requestedDoors: search.doors,
             userQuery: userText,
           });
+
+          // Post-audit color filter: if AI vision detected car color, filter strictly by requested colors
+          if (search.colors && search.colors.length > 0) {
+            const visualColorMatched = sortedEnriched.filter((c) => {
+              const audit = c.visualAudit as import("@/types").VisualAudit | undefined;
+              return isCarMatchingColor(c.title, search.colors, audit?.colorDetected);
+            });
+            if (visualColorMatched.length > 0) {
+              sortedEnriched = visualColorMatched;
+            }
+          }
         } catch (visionErr) {
           console.warn("[chat] Vision audit error, proceeding with text metadata:", visionErr);
         }
@@ -191,12 +213,16 @@ export async function POST(req: Request) {
           )
           .join("\n");
 
-        const isBroadQuery = !search.doors && !/(?:rojo|negro|blanco|azul|gris|verde|amarillo|cabrio|descapotable|coupe|coupé|familiar|suv|berlina|reventa|revender|chollo)/i.test(userText);
+        const isBroadQuery = !search.doors && !search.colors && !/(?:rojo|negro|blanco|azul|gris|verde|amarillo|cabrio|descapotable|coupe|coupé|familiar|suv|berlina|reventa|revender|chollo)/i.test(userText);
         const proactiveFilterPrompt = isBroadQuery
           ? "\n\nPREGUNTA PROACTIVA DE AFINADO (OBLIGATORIA): Como la búsqueda del usuario es abierta o genérica, al final de tu respuesta, pregúntale de forma cercana y proactiva si desea afinar con algún filtro específico: ¿Tiene preferencia por algún color (ej. rojo, negro, blanco...), tipo de carrocería (descapotable, utilitario, familiar, coupé), marca concreta o busca unidades con margen para reventa / negocio?"
           : "";
 
-        contextData += `\n\n## Resultados reales ordenados por puntuación IA (${sortedEnriched.length} coches analizados en el mercado español):\n${cars}\n\nInstrucción de Calidad y Coherencia: Presenta los mejores candidatos tomando estrictamente los primeros N coches de la lista anterior ordenada por puntuación. Tus recomendaciones deben coincidir de forma exacta con los vehículos analizados en el mercado. Para cada coche incluye: Precio, Kilometraje, Año, Combustible, Fuente y enlace [Ver anuncio ↗](url), 1-2 Ventajas reales y 1 Punto a revisar. Si el coche incluye información de [Visión IA: ...], menciona explícitamente en el texto lo que has auditado visualmente en la fotografía del anuncio (color, tipo de carrocería, estado de chapa/faros, potencial de reventa o daños detectados). Concluye SIEMPRE con las 3 preguntas clave para la llamada al vendedor (facturas de distribución/embrague, matrícula exacta o VIN, y motivo de venta).${proactiveFilterPrompt}${search.doors ? `\n\nREGLA CRÍTICA INQUEBRANTABLE DE CARROCERÍA: El usuario exige ÚNICAMENTE vehículos de ${search.doors} puertas. Queda TERMINANTEMENTE PROHIBIDO recomendar, incluir o mencionar coches de 4 o 5 puertas, ni siquiera como "alternativas" o notas. Recomienda SOLO coches de ${search.doors} puertas.` : ""}`;
+        const colorPromptRule = search.colors && search.colors.length > 0
+          ? `\n\nREGLA CRÍTICA DE COLOR: El usuario exige exclusivamente vehículo de color ${search.colors.join(" o ")}. Menciona explícitamente el color confirmado por Visión IA en la fotografía del anuncio para cada candidato.`
+          : "";
+
+        contextData += `\n\n## Resultados reales ordenados por puntuación IA (${sortedEnriched.length} coches analizados en el mercado español):\n${cars}\n\nInstrucción de Calidad y Coherencia: Presenta los mejores candidatos tomando estrictamente los primeros N coches de la lista anterior ordenada por puntuación. Tus recomendaciones deben coincidir de forma exacta con los vehículos analizados en el mercado. Para cada coche incluye: Precio, Kilometraje, Año, Combustible, Fuente y enlace [Ver anuncio ↗](url), 1-2 Ventajas reales y 1 Punto a revisar. Si el coche incluye información de [Visión IA: ...], menciona explícitamente en el texto lo que has auditado visualmente en la fotografía del anuncio (color, tipo de carrocería, estado de chapa/faros, potencial de reventa o daños detectados). Concluye SIEMPRE con las 3 preguntas clave para la llamada al vendedor (facturas de distribución/embrague, matrícula exacta o VIN, y motivo de venta).${proactiveFilterPrompt}${colorPromptRule}${search.doors ? `\n\nREGLA CRÍTICA INQUEBRANTABLE DE CARROCERÍA: El usuario exige ÚNICAMENTE vehículos de ${search.doors} puertas. Queda TERMINANTEMENTE PROHIBIDO recomendar, incluir o mencionar coches de 4 o 5 puertas, ni siquiera como "alternativas" o notas. Recomienda SOLO coches de ${search.doors} puertas.` : ""}`;
 
         // Collect enriched for data block and dashboard
         extraDataCars.push(...sortedEnriched);

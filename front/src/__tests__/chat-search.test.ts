@@ -16,7 +16,15 @@ jest.mock("@/lib/prisma", () => ({
 }));
 jest.mock("@/lib/ai", () => ({ opencode: jest.fn(), CHAT_MODEL: "qwen3.7-plus", AUTOMISHO_SYSTEM_PROMPT: "test" }));
 
-import { detectCarSearch, detectPlate, detectVIN, isCarMatchingDoors } from "@/lib/chat-helpers";
+import {
+  detectCarSearch,
+  detectPlate,
+  detectVIN,
+  isCarMatchingDoors,
+  isCarMatchingColor,
+  filterRealCarImages,
+  ensureCarGallery,
+} from "@/lib/chat-helpers";
 
 describe("detectCarSearch", () => {
   const fixtures: Array<{ query: string; isSearch: boolean; maxPrice?: number; minPrice?: number }> = [
@@ -134,5 +142,67 @@ describe("isCarMatchingDoors", () => {
     expect(isCarMatchingDoors("Ford Focus 1.6 TDCi 5p", "", 5)).toBe(true);
     expect(isCarMatchingDoors("Seat Ibiza 1.9 TDI 3p", "", 5)).toBe(false);
     expect(isCarMatchingDoors("Renault Megane Coupé", "", 5)).toBe(false);
+  });
+});
+
+describe("isCarMatchingColor & color detection", () => {
+  it("detects requested colors in user search queries", () => {
+    const res = detectCarSearch("coches de 3 puertas negros o grises de menos de 3000 euros");
+    expect(res.isSearch).toBe(true);
+    expect(res.doors).toBe(3);
+    expect(res.maxPrice).toBe(3000);
+    expect(res.colors).toEqual(expect.arrayContaining(["negro", "gris"]));
+  });
+
+  it("matches car with requested color in title or visual audit", () => {
+    expect(isCarMatchingColor("Seat Ibiza 1.9 TDI Sport Negro", ["negro", "gris"])).toBe(true);
+    expect(isCarMatchingColor("Fiat Punto 1.2", ["negro", "gris"], "Gris metalizado")).toBe(true);
+  });
+
+  it("rejects car with conflicting visual color or title", () => {
+    expect(isCarMatchingColor("Seat Ibiza Blanco", ["negro", "gris"])).toBe(false);
+    expect(isCarMatchingColor("Fiat Punto", ["negro", "gris"], "Blanco polar")).toBe(false);
+  });
+});
+
+describe("filterRealCarImages & ensureCarGallery", () => {
+  it("filters out dealer logos, banners, watermarks, and unsplash URLs", () => {
+    const mixedImages = [
+      "https://images.coches.net/dealers/ladonnaemobile/logo.jpg",
+      "https://images.coches.net/dealers/multimarca-banner.png",
+      "https://images.unsplash.com/photo-12345?auto=format",
+      "https://fotos.coches.net/anuncios/2026/09/car-front-authentic.jpg",
+      "https://fotos.coches.net/anuncios/2026/09/car-interior.jpg",
+      "https://static.wallapop.com/images/icons/badge.svg",
+    ];
+
+    const filtered = filterRealCarImages(mixedImages);
+    expect(filtered).toHaveLength(2);
+    expect(filtered[0]).toBe("https://fotos.coches.net/anuncios/2026/09/car-front-authentic.jpg");
+    expect(filtered[1]).toBe("https://fotos.coches.net/anuncios/2026/09/car-interior.jpg");
+  });
+
+  it("never pads with generic/stock images if only 1 authentic image exists", () => {
+    const car = {
+      title: "Renault Clio 1.2 3p",
+      image_url: "https://fotos.coches.net/clio-real.jpg",
+      images: ["https://fotos.coches.net/clio-real.jpg"],
+    };
+
+    const gallery = ensureCarGallery(car);
+    expect(gallery).toHaveLength(1);
+    expect(gallery[0]).toBe("https://fotos.coches.net/clio-real.jpg");
+    expect(gallery.some((u) => u.includes("unsplash"))).toBe(false);
+  });
+
+  it("returns empty array when no real images exist without injecting stock photos", () => {
+    const car = {
+      title: "Citroen C4 Coupé",
+      image_url: null,
+      images: [],
+    };
+
+    const gallery = ensureCarGallery(car);
+    expect(gallery).toEqual([]);
   });
 });

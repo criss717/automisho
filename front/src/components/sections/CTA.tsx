@@ -2,84 +2,83 @@
 
 import { useRef } from "react";
 import { motion, useInView } from "framer-motion";
+import Link from "next/link";
+import AutoMishoCat from "../icons/AutoMishoCat";
 
 export default function CTA() {
   const sectionRef = useRef<HTMLElement>(null);
   const isInView = useInView(sectionRef, { once: true, margin: "-50px" });
 
   return (
-    <section ref={sectionRef} id="cta" style={{ maxWidth: "1200px", margin: "0 auto", padding: "5rem 2rem", textAlign: "center" }}>
+    <section ref={sectionRef} id="cta" className="max-w-4xl mx-auto px-4 py-20 sm:py-28 text-center">
       <motion.div
-        initial={{ opacity: 0, y: 30 }}
+        initial={{ opacity: 0, y: 24 }}
         animate={isInView ? { opacity: 1, y: 0 } : {}}
         transition={{ duration: 0.6 }}
-        style={{ maxWidth: "700px", margin: "0 auto" }}
+        className="card p-10 sm:p-14 rounded-3xl bg-paper border border-mist shadow-subtle flex flex-col items-center"
       >
-        {/* Big Cat */}
+        {/* Cat Avatar */}
         <motion.div
-          initial={{ scale: 0.8, opacity: 0 }}
+          initial={{ scale: 0.9, opacity: 0 }}
           animate={isInView ? { scale: 1, opacity: 1 } : {}}
-          transition={{ duration: 0.8, delay: 0.2 }}
-          style={{ marginBottom: "40px", display: "flex", justifyContent: "center" }}
+          transition={{ duration: 0.6, delay: 0.15 }}
+          className="w-20 h-20 rounded-2xl bg-linen border border-mist flex items-center justify-center mb-6 shadow-sm overflow-hidden"
         >
-          <img
-            src="/assets/hero_logo.svg"
-            alt="AutoMisho"
-            style={{ width: "160px", height: "auto" }}
-          />
+          <AutoMishoCat size={64} interactive={false} />
         </motion.div>
 
         {/* Headline */}
-        <h2 style={{ color: "#ffffff", fontSize: "48px", fontFamily: "Georgia, serif", fontWeight: 400, lineHeight: 1.1, marginBottom: "24px" }}>
-          ¿Listo para encontrar<br />
-          <span className="glow-text">tu próximo coche?</span>
+        <h2 className="font-ppmondwest text-heading sm:text-heading-lg text-graphite font-normal mb-4 max-w-lg leading-tight">
+          ¿Listo para encontrar tu próximo coche con criterio experto?
         </h2>
 
         {/* Description */}
-        <p style={{ color: "#b0c5c1", fontSize: "18px", lineHeight: 1.6, maxWidth: "500px", margin: "0 auto 40px" }}>
-          Únete a miles de compradores que ya usan AutoMisho para tomar decisiones más inteligentes.
+        <p className="text-charcoal text-base max-w-md mx-auto mb-8 leading-relaxed font-normal">
+          Únete a compradores en toda España que ya usan AutoMisho para ahorrar tiempo, dinero y evitar vicios ocultos.
         </p>
 
         {/* CTA Button */}
         <motion.div
           initial={{ opacity: 0, y: 10 }}
           animate={isInView ? { opacity: 1, y: 0 } : {}}
-          transition={{ duration: 0.5, delay: 0.4 }}
-          style={{ marginBottom: "40px" }}
+          transition={{ duration: 0.5, delay: 0.3 }}
+          className="mb-8"
         >
-          <a
-            href="/auth/register"
-            className="btn-pill btn-primary glow-pulse"
-            style={{ fontSize: "18px", padding: "18px 40px", display: "inline-block" }}
+          <Link
+            href="/register"
+            className="btn-primary text-base py-3.5 px-8 font-medium inline-flex items-center gap-2"
           >
-            Empezar ahora — es gratis
-          </a>
+            <span>Empezar ahora — es gratis</span>
+            <span className="inline-flex items-center justify-center w-5 h-5 rounded-full border border-signal-blue text-xs">
+              →
+            </span>
+          </Link>
         </motion.div>
 
         {/* Trust badges */}
         <motion.div
           initial={{ opacity: 0 }}
           animate={isInView ? { opacity: 1 } : {}}
-          transition={{ duration: 0.6, delay: 0.6 }}
-          style={{ display: "flex", flexWrap: "wrap", justifyContent: "center", gap: "24px", color: "#b0c5c1", fontSize: "14px" }}
+          transition={{ duration: 0.6, delay: 0.45 }}
+          className="flex flex-wrap justify-center gap-6 text-xs text-ash"
         >
-          <span style={{ display: "flex", alignItems: "center", gap: "6px" }}>
-            <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-              <path d="M4 7 L6 9 L10 5" stroke="#97fcd7" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+          <span className="flex items-center gap-1.5">
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="none" className="text-signal-blue">
+              <path d="M3.5 7 L6 9.5 L10.5 4.5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
             </svg>
-            Sin tarjeta de crédito
+            Sin tarjeta de crédito requerida
           </span>
-          <span style={{ display: "flex", alignItems: "center", gap: "6px" }}>
-            <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-              <path d="M4 7 L6 9 L10 5" stroke="#97fcd7" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+          <span className="flex items-center gap-1.5">
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="none" className="text-signal-blue">
+              <path d="M3.5 7 L6 9.5 L10.5 4.5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
             </svg>
-            Cancela cuando quieras
+            Cancela o cambia de plan en cualquier momento
           </span>
-          <span style={{ display: "flex", alignItems: "center", gap: "6px" }}>
-            <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-              <path d="M4 7 L6 9 L10 5" stroke="#97fcd7" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+          <span className="flex items-center gap-1.5">
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="none" className="text-signal-blue">
+              <path d="M3.5 7 L6 9.5 L10.5 4.5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
             </svg>
-            Soporte en español
+            Soporte técnico especializado en España
           </span>
         </motion.div>
       </motion.div>

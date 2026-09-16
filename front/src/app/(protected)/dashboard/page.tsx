@@ -37,7 +37,7 @@ export default async function DashboardPage() {
   const currentPlan = (dbUser?.plan as "free" | "premium" | "pro") || (session.user.plan as "free" | "premium" | "pro") || "free";
 
   return (
-    <div className="relative h-full overflow-y-auto overflow-x-hidden bg-forest-depths w-full">
+    <div className="relative h-full overflow-y-auto overflow-x-hidden bg-parchment w-full text-charcoal">
       <DashboardBlobs />
       <div className="relative w-full max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-10 space-y-8">
         <Suspense fallback={null}>
@@ -45,22 +45,22 @@ export default async function DashboardPage() {
         </Suspense>
 
         <DashboardHeader>
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-6 border-b border-midnight-tide">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-6 border-b border-mist">
             <div>
-              <span className="text-xs uppercase tracking-widest text-mint-glow font-medium mb-1 block">
+              <span className="text-xs uppercase tracking-widest text-ash font-medium mb-1 block">
                 Área Personal
               </span>
-              <h1 className="text-3xl sm:text-4xl text-pure-light font-teodor tracking-tight">
+              <h1 className="font-ppmondwest text-3xl sm:text-4xl text-graphite font-normal tracking-tight">
                 Mi Cuenta & Control
               </h1>
-              <p className="text-xs sm:text-sm text-mist-gray/70 mt-1 max-w-md">
+              <p className="text-xs sm:text-sm text-ash mt-1 max-w-md">
                 Gestiona tu suscripción, revisa cuotas de uso y accede al portal de consulta de matrículas DGT.
               </p>
             </div>
 
             <Link
               href="/chat"
-              className="inline-flex items-center gap-2 px-5 py-2.5 rounded-full bg-mint-glow text-forest-depths font-medium text-xs sm:text-sm hover:shadow-[0_0_15px_rgba(151,252,215,0.4)] transition-all self-start sm:self-auto"
+              className="btn-primary inline-flex items-center gap-2 px-5 py-2.5 rounded-lg text-xs sm:text-sm self-start sm:self-auto"
             >
               <span>💬 Abrir Copilot Workspace</span>
               <span>→</span>

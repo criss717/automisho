@@ -91,14 +91,14 @@ export default function ConversationSidebar({ currentId }: ConversationSidebarPr
   };
 
   return (
-    <div className="w-64 shrink-0 border-r border-midnight-tide bg-forest-depths flex flex-col h-full">
+    <div className="w-64 shrink-0 border-r border-mist bg-linen flex flex-col h-full text-charcoal">
       {/* Header */}
-      <div className="p-3 border-b border-midnight-tide">
+      <div className="p-3 border-b border-mist">
         <button
           onClick={handleNew}
-          className="w-full flex items-center justify-center gap-2 py-2.5 px-4 rounded-lg border border-midnight-tide text-sm text-mist-gray hover:text-pure-light hover:border-mint-glow/30 hover:bg-white/5 transition-all"
+          className="btn-secondary w-full text-xs py-2 px-3 justify-center flex items-center gap-1.5 font-medium"
         >
-          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5">
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.8">
             <path d="M8 3v10M3 8h10" />
           </svg>
           Nueva conversación
@@ -106,13 +106,13 @@ export default function ConversationSidebar({ currentId }: ConversationSidebarPr
       </div>
 
       {/* List */}
-      <div className="flex-1 overflow-y-auto p-2 space-y-0.5">
+      <div className="flex-1 overflow-y-auto p-2 space-y-1">
         {loading && (
-          <div className="text-xs text-mist-gray/40 text-center py-4">Cargando...</div>
+          <div className="text-xs text-ash text-center py-4 font-medium">Cargando...</div>
         )}
 
         {!loading && conversations.length === 0 && (
-          <div className="text-xs text-mist-gray/40 text-center py-4">
+          <div className="text-xs text-ash text-center py-4 font-medium">
             No hay conversaciones
           </div>
         )}
@@ -123,22 +123,22 @@ export default function ConversationSidebar({ currentId }: ConversationSidebarPr
             onClick={() => router.push(`/chat/${conv.id}`)}
             className={`group flex items-start justify-between gap-2 px-3 py-2.5 rounded-lg cursor-pointer transition-all ${
               currentId === conv.id
-                ? "bg-white/5 text-pure-light"
-                : "text-mist-gray/70 hover:bg-white/3 hover:text-mist-gray"
+                ? "bg-paper border border-mist text-graphite shadow-subtle font-medium"
+                : "text-charcoal hover:bg-paper/70 hover:text-graphite border border-transparent"
             }`}
           >
             <div className="min-w-0 flex-1">
-              <p className="text-sm truncate">{conv.title}</p>
-              <p className="text-[11px] text-mist-gray/40 mt-0.5">
+              <p className="text-xs truncate">{conv.title}</p>
+              <p className="text-[11px] text-ash mt-0.5">
                 {formatDate(conv.updatedAt)} · {conv._count.messages} msgs
               </p>
             </div>
             <button
               onClick={(e) => handleDelete(conv.id, e)}
-              className="shrink-0 opacity-0 group-hover:opacity-100 p-1 rounded hover:bg-red-400/10 text-mist-gray/30 hover:text-red-400 transition-all"
+              className="shrink-0 opacity-0 group-hover:opacity-100 p-1 rounded hover:bg-red-50 text-ash hover:text-red-600 transition-all"
               title="Eliminar"
             >
-              <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5">
+              <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.8">
                 <path d="M4 4l8 8M12 4l-8 8" />
               </svg>
             </button>

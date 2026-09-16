@@ -89,27 +89,27 @@ export default function MessageInput({ value, onChange, onSubmit, isLoading }: M
 
   return (
     <div
-      className={`shrink-0 border-t bg-forest-depths/95 backdrop-blur-md px-3 sm:px-4 py-3 transition-colors ${
-        dragOver ? "border-mint-glow bg-mint-glow/5" : "border-midnight-tide"
+      className={`shrink-0 border-t bg-paper/95 backdrop-blur-md px-3 sm:px-4 py-3 transition-colors ${
+        dragOver ? "border-signal-blue bg-linen" : "border-mist"
       }`}
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
     >
       {preview && (
-        <div className="w-full max-w-2xl mx-auto mb-2.5 flex items-center justify-between gap-3 p-2.5 rounded-2xl bg-midnight-tide/80 border border-mint-glow/30">
+        <div className="w-full max-w-2xl mx-auto mb-2.5 flex items-center justify-between gap-3 p-2.5 rounded-xl bg-linen border border-mist">
           <div className="flex items-center gap-3 min-w-0">
             {preview.isPdf ? (
-              <div className="w-10 h-10 rounded-xl bg-rose-500/10 border border-rose-500/30 flex items-center justify-center shrink-0">
-                <span className="text-rose-400 font-bold text-xs">PDF</span>
+              <div className="w-10 h-10 rounded-lg bg-rose-50 border border-rose-200 flex items-center justify-center shrink-0">
+                <span className="text-rose-600 font-bold text-xs">PDF</span>
               </div>
             ) : preview.url ? (
-              <img src={preview.url} alt="Preview" className="w-10 h-10 rounded-xl object-cover border border-midnight-tide shrink-0" />
+              <img src={preview.url} alt="Preview" className="w-10 h-10 rounded-lg object-cover border border-mist shrink-0" />
             ) : null}
 
             <div className="min-w-0 flex flex-col">
-              <span className="text-xs font-medium text-pure-light truncate">{preview.name}</span>
-              <span className="text-[10px] text-mist-gray/70">
+              <span className="text-xs font-medium text-graphite truncate">{preview.name}</span>
+              <span className="text-[10px] text-ash">
                 {preview.isPdf ? `Documento PDF (${preview.sizeKb} KB) listo para auditoría` : `Imagen (${preview.sizeKb} KB)`}
               </span>
             </div>
@@ -117,7 +117,7 @@ export default function MessageInput({ value, onChange, onSubmit, isLoading }: M
 
           <button
             onClick={clearPreview}
-            className="w-7 h-7 rounded-full bg-forest-depths border border-white/10 flex items-center justify-center text-mist-gray hover:text-rose-400 text-sm shrink-0 transition-colors"
+            className="w-7 h-7 rounded-full bg-paper border border-mist flex items-center justify-center text-ash hover:text-rose-600 text-sm shrink-0 transition-colors"
             title="Eliminar archivo adjunto"
           >
             ×
@@ -127,14 +127,14 @@ export default function MessageInput({ value, onChange, onSubmit, isLoading }: M
 
       {/* Search Mode Pill Switch */}
       <div className="w-full max-w-2xl mx-auto mb-2 flex items-center justify-between gap-2 px-1">
-        <div className="flex items-center gap-1.5 bg-midnight-tide/60 p-0.5 rounded-full border border-white/5 text-[11px]">
+        <div className="flex items-center gap-1 bg-linen p-0.5 rounded-lg border border-mist text-[11px]">
           <button
             type="button"
             onClick={() => setSearchMode("standard")}
-            className={`px-2.5 py-0.5 rounded-full transition-all flex items-center gap-1 ${
+            className={`px-2.5 py-0.5 rounded-md transition-all flex items-center gap-1 ${
               searchMode === "standard"
-                ? "bg-mint-glow text-forest-depths font-semibold shadow-sm"
-                : "text-mist-gray/60 hover:text-pure-light"
+                ? "bg-paper text-graphite font-semibold shadow-subtle border border-mist"
+                : "text-ash hover:text-charcoal"
             }`}
             title="Escanea hasta 50 coches en AutoScout24 y Coches.net (~2.5s)"
           >
@@ -144,10 +144,10 @@ export default function MessageInput({ value, onChange, onSubmit, isLoading }: M
           <button
             type="button"
             onClick={() => setSearchMode("deep")}
-            className={`px-2.5 py-0.5 rounded-full transition-all flex items-center gap-1 ${
+            className={`px-2.5 py-0.5 rounded-md transition-all flex items-center gap-1 ${
               searchMode === "deep"
-                ? "bg-mint-glow text-forest-depths font-semibold shadow-sm"
-                : "text-mist-gray/60 hover:text-pure-light"
+                ? "bg-paper text-graphite font-semibold shadow-subtle border border-mist"
+                : "text-ash hover:text-charcoal"
             }`}
             title="Escanea hasta 100 coches en AutoScout24, Coches.net, Wallapop y Milanuncios (~5s)"
           >
@@ -156,7 +156,7 @@ export default function MessageInput({ value, onChange, onSubmit, isLoading }: M
           </button>
         </div>
 
-        <span className="text-[10px] text-mist-gray/40 hidden md:inline">
+        <span className="text-[10px] text-ash hidden md:inline font-medium">
           {searchMode === "standard" ? "Rápida (~2.5s)" : "Multi-portal (~5s)"}
         </span>
       </div>
@@ -165,7 +165,7 @@ export default function MessageInput({ value, onChange, onSubmit, isLoading }: M
         <button
           onClick={() => fileInputRef.current?.click()}
           disabled={isLoading}
-          className="shrink-0 w-10 h-10 rounded-xl border border-midnight-tide bg-shadow-teal/30 text-mist-gray hover:text-mint-glow hover:border-mint-glow/30 flex items-center justify-center transition-all disabled:opacity-30 group"
+          className="shrink-0 w-10 h-10 rounded-xl border border-mist bg-linen text-ash hover:text-signal-blue hover:border-signal-blue flex items-center justify-center transition-all disabled:opacity-30 group"
           title="Adjuntar PDF (informe DGT, ITV, CarVertical) o imagen del coche"
         >
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" className="group-hover:scale-105 transition-transform">
@@ -190,13 +190,13 @@ export default function MessageInput({ value, onChange, onSubmit, isLoading }: M
           placeholder="Pregúntame sobre coches, sube un PDF (DGT/ITV) o dime qué te dijo el vendedor..."
           rows={1}
           disabled={isLoading}
-          className="flex-1 min-h-[42px] max-h-[120px] resize-none bg-shadow-teal/40 border border-midnight-tide rounded-xl px-3.5 py-2.5 text-sm text-pure-light placeholder:text-mist-gray/40 focus:outline-none focus:border-mint-glow/40 transition-colors disabled:opacity-50"
+          className="flex-1 min-h-[42px] max-h-[120px] resize-none bg-linen border border-mist rounded-xl px-3.5 py-2.5 text-sm text-graphite placeholder:text-ash focus:outline-none focus:border-signal-blue transition-colors disabled:opacity-50"
         />
 
         <button
           onClick={handleSubmit}
           disabled={(!value.trim() && !selectedFiles) || isLoading}
-          className="shrink-0 w-10 h-10 rounded-xl bg-mint-glow text-forest-depths flex items-center justify-center disabled:opacity-30 disabled:cursor-not-allowed hover:shadow-[0_0_12px_rgba(151,252,215,0.4)] transition-all font-semibold"
+          className="btn-primary shrink-0 w-10 h-10 rounded-xl flex items-center justify-center disabled:opacity-30 disabled:cursor-not-allowed transition-all font-semibold"
           title="Enviar mensaje"
         >
           <svg width="16" height="16" viewBox="0 0 20 20" fill="none">
@@ -211,7 +211,7 @@ export default function MessageInput({ value, onChange, onSubmit, isLoading }: M
         </button>
       </div>
 
-      <p className="text-[10px] text-mist-gray/40 text-center mt-1.5 hidden sm:block">
+      <p className="text-[10px] text-ash text-center mt-1.5 hidden sm:block">
         Enter para enviar · Shift+Enter para nueva línea · Arrastra PDFs de la DGT o imágenes aquí
       </p>
     </div>

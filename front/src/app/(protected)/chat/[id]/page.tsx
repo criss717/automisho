@@ -98,18 +98,18 @@ export default function ChatConversationPage() {
 
   if (loadingConv) {
     return (
-      <div className="h-full flex bg-forest-depths">
+      <div className="h-full flex bg-parchment">
         <ConversationSidebar currentId={conversationId} />
-        <div className="flex-1 flex flex-col items-center justify-center gap-3">
-          <NutSpinner size={32} className="text-mint-glow" />
-          <div className="text-xs text-mist-gray/60">Cargando copiloto AutoMisho...</div>
+        <div className="flex-1 flex flex-col items-center justify-center gap-3 text-ash">
+          <NutSpinner size={32} className="text-signal-blue" />
+          <div className="text-xs font-medium">Cargando copiloto AutoMisho...</div>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="h-full flex min-h-0 overflow-hidden bg-forest-depths relative">
+    <div className="h-full flex min-h-0 overflow-hidden bg-parchment relative text-charcoal">
       {/* Collapsible Sidebar */}
       {sidebarOpen && (
         <div className="hidden md:block shrink-0 h-full transition-all">
@@ -120,37 +120,37 @@ export default function ChatConversationPage() {
       {/* Main Workspace (Split Screen on lg, Tabbed on mobile) */}
       <div className="flex-1 flex flex-col min-w-0 min-h-0 overflow-hidden relative">
         {/* Mobile Tab Switcher (< lg) & Sidebar Toggle */}
-        <div className="shrink-0 flex items-center justify-between px-4 py-2 border-b border-midnight-tide bg-forest-depths/90 backdrop-blur-sm lg:hidden">
+        <div className="shrink-0 flex items-center justify-between px-4 py-2.5 border-b border-mist bg-paper lg:hidden">
           <button
             onClick={() => setSidebarOpen((prev) => !prev)}
-            className="p-1.5 rounded-lg text-mist-gray hover:text-pure-light hover:bg-white/5 text-xs flex items-center gap-1"
+            className="p-1.5 rounded-lg text-charcoal hover:text-ink-black hover:bg-linen text-xs flex items-center gap-1 font-medium border border-mist"
           >
             <span>☰</span>
             <span className="hidden sm:inline">Historial</span>
           </button>
 
-          <div className="flex items-center p-1 rounded-full bg-midnight-tide border border-white/5">
+          <div className="flex items-center p-0.5 rounded-lg bg-linen border border-mist">
             <button
               onClick={() => setActiveMobileTab("chat")}
-              className={`px-3 py-1 rounded-full text-xs font-medium transition-all ${
+              className={`px-3 py-1 rounded-md text-xs font-medium transition-all ${
                 activeMobileTab === "chat"
-                  ? "bg-mint-glow text-forest-depths shadow-sm"
-                  : "text-mist-gray/70 hover:text-pure-light"
+                  ? "bg-paper text-graphite shadow-sm border border-mist"
+                  : "text-ash hover:text-charcoal"
               }`}
             >
               💬 Chat
             </button>
             <button
               onClick={() => setActiveMobileTab("dashboard")}
-              className={`px-3 py-1 rounded-full text-xs font-medium transition-all flex items-center gap-1 ${
+              className={`px-3 py-1 rounded-md text-xs font-medium transition-all flex items-center gap-1 ${
                 activeMobileTab === "dashboard"
-                  ? "bg-mint-glow text-forest-depths shadow-sm"
-                  : "text-mist-gray/70 hover:text-pure-light"
+                  ? "bg-paper text-graphite shadow-sm border border-mist"
+                  : "text-ash hover:text-charcoal"
               }`}
             >
               🚗 Coches
               {discoveredCars.length > 0 && (
-                <span className="px-1.5 py-0.2 rounded-full bg-forest-depths text-mint-glow text-[10px] font-bold">
+                <span className="px-1.5 py-0.2 rounded-full bg-linen border border-signal-blue text-signal-blue text-[10px] font-bold">
                   {discoveredCars.length}
                 </span>
               )}
@@ -164,7 +164,7 @@ export default function ChatConversationPage() {
         <div className="flex-1 flex min-w-0 min-h-0 overflow-hidden">
           {/* Left Column: Chat Window (45% width on desktop, 100% on mobile when active) */}
           <div
-            className={`flex-1 lg:max-w-[45%] xl:max-w-[42%] flex flex-col min-h-0 h-full border-r border-midnight-tide ${
+            className={`flex-1 lg:max-w-[45%] xl:max-w-[42%] flex flex-col min-h-0 h-full border-r border-mist ${
               activeMobileTab === "chat" ? "flex" : "hidden lg:flex"
             }`}
           >

@@ -4,6 +4,7 @@ import { useRef, useEffect } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import MessageBubble from "./MessageBubble";
 import NutSpinner from "../icons/NutSpinner";
+import AutoMishoCat from "../icons/AutoMishoCat";
 import CarResultCard from "./CarResultCard";
 import DGTGuideCard from "../dgt/DGTGuideCard";
 import CarVerticalCard from "../dgt/CarVerticalCard";
@@ -36,13 +37,13 @@ export default function MessageList({ messages, isLoading, onAskCopilot }: Messa
       <div className="max-w-3xl mx-auto px-4 md:px-6 py-6 space-y-4">
         {messages.length === 0 && !isLoading && (
           <div className="flex flex-col items-center justify-center pt-16 pb-8 text-center">
-            <div className="w-16 h-16 rounded-full bg-mint-glow/10 border border-mint-glow/20 flex items-center justify-center mb-4">
-              <img src="/assets/hero_logo.svg" alt="AutoMisho" className="w-9 h-9 object-contain" />
+            <div className="w-16 h-16 rounded-full bg-linen border border-mist flex items-center justify-center mb-4 overflow-hidden shadow-subtle">
+              <AutoMishoCat size={44} interactive={false} />
             </div>
-            <h2 className="text-xl text-pure-light font-light mb-2">
+            <h2 className="font-ppmondwest text-2xl text-graphite font-normal mb-2">
               Hola, soy AutoMisho
             </h2>
-            <p className="text-xs md:text-sm text-mist-gray/70 max-w-sm mb-6">
+            <p className="text-xs md:text-sm text-ash max-w-sm mb-6 font-normal leading-relaxed">
               Tu copiloto IA para comprar coches de segunda mano en España. Busca en múltiples portales y consulta informes oficiales.
             </p>
             <div className="flex flex-wrap justify-center gap-2">
@@ -54,7 +55,7 @@ export default function MessageList({ messages, isLoading, onAskCopilot }: Messa
                 <button
                   key={suggestion}
                   onClick={() => onAskCopilot?.(suggestion)}
-                  className="text-xs px-3.5 py-1.5 rounded-full border border-midnight-tide text-mist-gray/80 hover:text-mint-glow hover:border-mint-glow/30 hover:bg-white/5 cursor-pointer transition-all"
+                  className="text-xs px-3.5 py-1.5 rounded-full border border-mist text-charcoal hover:border-signal-blue hover:text-signal-blue bg-paper cursor-pointer transition-all shadow-subtle"
                 >
                   {suggestion}
                 </button>

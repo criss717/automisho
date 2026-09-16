@@ -107,19 +107,19 @@ export default function CopilotLiveDashboard({
   }, [cars]);
 
   return (
-    <div className="h-full flex flex-col bg-forest-depths/40 border-l border-midnight-tide overflow-hidden">
+    <div className="h-full flex flex-col bg-parchment border-l border-mist overflow-hidden text-charcoal">
       {/* Header Toolbar */}
-      <div className="shrink-0 p-4 border-b border-midnight-tide bg-forest-depths/80 backdrop-blur-md">
+      <div className="shrink-0 p-4 border-b border-mist bg-paper">
         <div className="flex items-center justify-between gap-3 mb-3">
-          <div className="flex items-center gap-2">
-            <div className="w-8 h-8 rounded-full bg-mint-glow/10 border border-mint-glow/30 flex items-center justify-center">
-              <span className="text-mint-glow text-sm">⚡</span>
+          <div className="flex items-center gap-2.5">
+            <div className="w-8 h-8 rounded-lg bg-linen border border-mist flex items-center justify-center">
+              <span className="text-signal-blue text-sm">⚡</span>
             </div>
             <div>
-              <h2 className="text-sm font-semibold text-pure-light tracking-wide">
+              <h2 className="text-sm font-semibold text-graphite tracking-tight">
                 Copilot Live Dashboard
               </h2>
-              <p className="text-[11px] text-mist-gray/60">
+              <p className="text-[11px] text-ash">
                 {isLoading
                   ? "Buscando publicaciones en vivo..."
                   : cars.length > 0
@@ -131,11 +131,11 @@ export default function CopilotLiveDashboard({
 
           {stats && !isLoading && (
             <div className="flex items-center gap-2 text-xs">
-              <span className="px-2.5 py-1 rounded-full bg-mint-glow/10 border border-mint-glow/20 text-mint-glow font-medium">
+              <span className="px-2.5 py-1 rounded-full bg-linen border border-mist text-graphite font-medium">
                 Desde {stats.minPrice}
               </span>
-              <span className="px-2.5 py-1 rounded-full bg-white/5 border border-white/10 text-pure-light font-medium">
-                Match medio: {stats.avgScore}%
+              <span className="px-2.5 py-1 rounded-full bg-linen border border-mist text-ash font-medium">
+                Match: {stats.avgScore}%
               </span>
             </div>
           )}
@@ -160,12 +160,12 @@ export default function CopilotLiveDashboard({
                   onClick={() => setPortalFilter(p.id)}
                   className={`text-[11px] px-2.5 py-0.5 rounded-full transition-all flex items-center gap-1.5 ${
                     portalFilter === p.id
-                      ? "bg-mint-glow/20 border border-mint-glow/50 text-mint-glow font-medium"
-                      : "text-mist-gray/60 hover:text-pure-light border border-transparent hover:border-white/10"
+                      ? "bg-linen border border-signal-blue text-signal-blue font-medium"
+                      : "text-ash hover:text-graphite border border-transparent hover:border-mist"
                   }`}
                 >
                   <span>{p.label}</span>
-                  <span className="text-[9px] px-1 rounded-full bg-forest-depths/80 text-mist-gray/80">
+                  <span className="text-[9px] px-1 rounded-full bg-mist text-charcoal">
                     {p.count}
                   </span>
                 </button>
@@ -176,7 +176,7 @@ export default function CopilotLiveDashboard({
 
         {/* Filters and Sorting Controls */}
         {cars.length > 0 && !isLoading && (
-          <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-white/5">
+          <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-mist">
             {/* Fuel filters */}
             <div className="flex items-center gap-1">
               {(
@@ -192,8 +192,8 @@ export default function CopilotLiveDashboard({
                   onClick={() => setFuelFilter(f.id)}
                   className={`text-[11px] px-2.5 py-1 rounded-full transition-all ${
                     fuelFilter === f.id
-                      ? "bg-mint-glow text-forest-depths font-medium shadow-sm"
-                      : "text-mist-gray/70 hover:text-pure-light hover:bg-white/5"
+                      ? "bg-linen border border-signal-blue text-signal-blue font-medium"
+                      : "text-ash hover:text-graphite hover:bg-linen"
                   }`}
                 >
                   {f.label}
@@ -202,13 +202,13 @@ export default function CopilotLiveDashboard({
             </div>
 
             {/* Sort selector */}
-            <div className="flex items-center gap-1.5 text-xs text-mist-gray/70">
+            <div className="flex items-center gap-1.5 text-xs text-ash">
               <span className="text-[11px]">Ordenar:</span>
               <select
                 value={sortBy}
                 onChange={(e) => setSortBy(e.target.value as SortOption)}
                 aria-label="Ordenar vehículos"
-                className="bg-midnight-tide/80 border border-white/10 rounded-lg text-pure-light text-xs px-2 py-1 outline-none focus:border-mint-glow/40 cursor-pointer"
+                className="bg-linen border border-mist rounded-lg text-graphite text-xs px-2 py-1 outline-none focus:border-signal-blue cursor-pointer"
               >
                 <option value="score">Mayor Puntuación</option>
                 <option value="price_asc">Menor Precio</option>
@@ -226,30 +226,29 @@ export default function CopilotLiveDashboard({
         {isLoading && (
           <div className="h-full flex flex-col items-center justify-center p-8 text-center">
             <div className="relative mb-6">
-              <div className="w-20 h-20 rounded-full bg-mint-glow/10 border border-mint-glow/20 flex items-center justify-center">
-                <NutSpinner size={42} className="text-mint-glow animate-[spin_3s_linear_infinite]" />
+              <div className="w-16 h-16 rounded-full bg-linen border border-mist flex items-center justify-center">
+                <NutSpinner size={36} className="text-signal-blue animate-[spin_3s_linear_infinite]" />
               </div>
-              <div className="absolute inset-0 rounded-full bg-mint-glow/10 blur-xl animate-pulse" />
             </div>
 
-            <h3 className="text-lg font-teodor text-pure-light mb-2">
+            <h3 className="font-ppmondwest text-xl text-graphite font-normal mb-2">
               AutoMisho está analizando el mercado...
             </h3>
-            <p className="text-xs text-mist-gray/70 max-w-sm leading-relaxed mb-6">
+            <p className="text-xs text-ash max-w-sm leading-relaxed mb-6">
               Consultando AutoScout24, coches.net, Wallapop y Milanuncios para extraer fichas, kilometrajes reales y puntuaciones IA.
             </p>
 
             <div className="flex flex-wrap justify-center gap-2 max-w-xs">
-              <span className="text-[10px] px-2.5 py-1 rounded-full bg-white/5 border border-white/10 text-mist-gray">
+              <span className="text-[10px] px-2.5 py-1 rounded-full bg-linen border border-mist text-ash">
                 AutoScout24
               </span>
-              <span className="text-[10px] px-2.5 py-1 rounded-full bg-white/5 border border-white/10 text-mist-gray">
+              <span className="text-[10px] px-2.5 py-1 rounded-full bg-linen border border-mist text-ash">
                 coches.net
               </span>
-              <span className="text-[10px] px-2.5 py-1 rounded-full bg-white/5 border border-white/10 text-mist-gray">
+              <span className="text-[10px] px-2.5 py-1 rounded-full bg-linen border border-mist text-ash">
                 Wallapop
               </span>
-              <span className="text-[10px] px-2.5 py-1 rounded-full bg-white/5 border border-white/10 text-mist-gray">
+              <span className="text-[10px] px-2.5 py-1 rounded-full bg-linen border border-mist text-ash">
                 Milanuncios
               </span>
             </div>
@@ -259,18 +258,18 @@ export default function CopilotLiveDashboard({
         {/* Empty State */}
         {!isLoading && cars.length === 0 && (
           <div className="h-full flex flex-col items-center justify-center p-8 text-center">
-            <div className="w-14 h-14 rounded-2xl bg-midnight-tide border border-white/5 flex items-center justify-center text-2xl mb-4 text-mist-gray/40">
+            <div className="w-12 h-12 rounded-xl bg-linen border border-mist flex items-center justify-center text-xl mb-4 text-ash">
               🚗
             </div>
-            <h3 className="text-base font-teodor text-pure-light mb-1">
+            <h3 className="font-ppmondwest text-lg text-graphite font-normal mb-1">
               Dashboard de Comparativa Dinámica
             </h3>
-            <p className="text-xs text-mist-gray/60 max-w-xs leading-relaxed mb-6">
+            <p className="text-xs text-ash max-w-xs leading-relaxed mb-6">
               Pídele a AutoMisho lo que necesitas en el chat (por ejemplo, presupuesto o modelo) y aquí verás la ficha comparativa con fotos, pros, contras y enlaces en directo.
             </p>
 
             <div className="w-full max-w-xs space-y-2">
-              <p className="text-[11px] uppercase tracking-wider text-mint-glow font-medium text-left">
+              <p className="text-[11px] uppercase tracking-wider text-ash font-medium text-left">
                 Prueba pidiéndole:
               </p>
               {[
@@ -281,7 +280,7 @@ export default function CopilotLiveDashboard({
                 <button
                   key={suggestion}
                   onClick={() => onAskCopilot?.(suggestion)}
-                  className="w-full text-left p-2.5 rounded-xl bg-midnight-tide/50 border border-white/5 hover:border-mint-glow/30 hover:bg-midnight-tide text-xs text-mist-gray hover:text-pure-light transition-all"
+                  className="w-full text-left p-2.5 rounded-xl bg-paper border border-mist hover:border-signal-blue text-xs text-charcoal hover:text-graphite transition-all shadow-subtle"
                 >
                   &ldquo;{suggestion}&rdquo;
                 </button>
@@ -293,7 +292,7 @@ export default function CopilotLiveDashboard({
         {/* Filtered Empty State */}
         {!isLoading && cars.length > 0 && filteredAndSortedCars.length === 0 && (
           <div className="h-full flex flex-col items-center justify-center p-8 text-center">
-            <p className="text-sm text-mist-gray/70 mb-3">
+            <p className="text-sm text-ash mb-3">
               No hay vehículos con el filtro seleccionado ({portalFilter !== "all" ? portalFilter : fuelFilter}).
             </p>
             <button
@@ -301,7 +300,7 @@ export default function CopilotLiveDashboard({
                 setFuelFilter("all");
                 setPortalFilter("all");
               }}
-              className="px-4 py-1.5 rounded-full bg-mint-glow text-forest-depths text-xs font-medium"
+              className="btn-primary text-xs py-1.5 px-4"
             >
               Restablecer filtros
             </button>

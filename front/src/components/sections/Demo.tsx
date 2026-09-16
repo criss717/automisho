@@ -3,37 +3,38 @@
 import { useRef, useState, useEffect } from "react";
 import { motion, useInView, AnimatePresence } from "framer-motion";
 import NutSpinner from "../icons/NutSpinner";
+import AutoMishoCat from "../icons/AutoMishoCat";
 
 const chatMessages = [
   {
     role: "user" as const,
-    text: "Estoy buscando un SUV familiar de menos de 15.000€. Vivo en Madrid y hago unos 20.000km al año.",
+    text: "Estoy buscando un coche compacto de 3 puertas fiable por menos de 3.000€ en Madrid.",
   },
   {
     role: "assistant" as const,
-    text: "Perfecto, déjame buscar las mejores opciones para ti. Analizando AutoScout24, coches.net y verificando historiales...",
+    text: "Perfecto. Escaneando AutoScout24, coches.net, Wallapop y Milanuncios con visión artificial para certificar 3 puertas y estado de chapa...",
     loading: true,
   },
   {
     role: "assistant" as const,
-    text: "He encontrado 3 opciones excelentes para ti:",
+    text: "He seleccionado 3 unidades sobresalientes que cumplen rigurosamente tus filtros:",
   },
   {
     role: "assistant" as const,
     card: {
-      title: "Nissan Qashqai 1.5 dCi Tekna",
-      price: "€13.900",
-      year: "2019",
-      km: "87.000 km",
+      title: "FIAT Punto 1.3 Multijet Classic (3p)",
+      price: "2.999 €",
+      year: "2008",
+      km: "235.000 km",
       location: "Madrid",
-      score: 92,
+      score: 88,
       alerts: 0,
-      source: "AutoScout24",
+      source: "coches.net",
     },
   },
   {
     role: "assistant" as const,
-    text: "Este Qashqai es mi recomendación #1. El motor 1.5 dCi es uno de los más fiables del mercado, y el acabado Tekna incluye cámara 360° y asientos calefactables. El precio está 800€ por debajo del mercado.",
+    text: "Esta unidad es mi opción recomendada: carrocería 3 puertas verificada por foto, motor diésel de consumo bajísimo y sin incidencias DGT reportadas.",
   },
 ];
 
@@ -59,103 +60,103 @@ export default function Demo() {
   }, [isInView]);
 
   return (
-    <section ref={sectionRef} id="demo" style={{ maxWidth: "1200px", margin: "0 auto", padding: "5rem 2rem", textAlign: "center" }}>
+    <section ref={sectionRef} id="demo" className="max-w-4xl mx-auto px-4 py-20 sm:py-28 text-center">
       {/* Section Header */}
       <motion.div
-        initial={{ opacity: 0, y: 30 }}
+        initial={{ opacity: 0, y: 20 }}
         animate={isInView ? { opacity: 1, y: 0 } : {}}
         transition={{ duration: 0.6 }}
-        style={{ marginBottom: "48px" }}
+        className="mb-14"
       >
-        <p style={{ color: "#97fcd7", fontSize: "14px", fontWeight: 500, textTransform: "uppercase", letterSpacing: "0.1em", marginBottom: "12px" }}>
-          Demo
+        <p className="text-xs uppercase tracking-widest text-ash font-medium mb-3">
+          Demostración en Vivo
         </p>
-        <h2 style={{ color: "#ffffff", fontSize: "48px", fontFamily: "Georgia, serif", fontWeight: 400, lineHeight: 1, maxWidth: "600px", margin: "0 auto" }}>
-          Así habla AutoMisho
+        <h2 className="text-heading sm:text-heading-lg text-graphite font-normal max-w-xl mx-auto">
+          Conversaciones precisas, criterio técnico real
         </h2>
       </motion.div>
 
-      {/* Chat Container */}
+      {/* Chat Container Card (Paper with 1px Mist border) */}
       <motion.div
-        initial={{ opacity: 0, y: 40 }}
+        initial={{ opacity: 0, y: 30 }}
         animate={isInView ? { opacity: 1, y: 0 } : {}}
         transition={{ duration: 0.6, delay: 0.2 }}
-        style={{ maxWidth: "700px", margin: "0 auto" }}
+        className="max-w-2xl mx-auto"
       >
-        <div style={{ background: "#23524c", border: "1px solid #0f3933", borderRadius: "12px", padding: "24px", boxShadow: "0 0 20px 5px rgba(151,252,215,0.4)" }}>
-          {/* Chat Header */}
-          <div style={{ display: "flex", alignItems: "center", gap: "12px", marginBottom: "24px", paddingBottom: "16px", borderBottom: "1px solid #0f3933" }}>
-            <div style={{ width: "40px", height: "40px", borderRadius: "50%", background: "#23524c", display: "flex", alignItems: "center", justifyContent: "center" }}>
-              <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
-                <circle cx="12" cy="8" r="4" stroke="#97fcd7" strokeWidth="1.5" />
-                <path d="M4 20 C4 16 8 14 12 14 C16 14 20 16 20 20" stroke="#97fcd7" strokeWidth="1.5" fill="none" />
-              </svg>
+        <div className="card text-left p-6 sm:p-8 bg-paper border border-mist shadow-subtle rounded-2xl">
+          {/* Header */}
+          <div className="flex items-center justify-between pb-4 mb-6 border-b border-mist">
+            <div className="flex items-center gap-3">
+              <div className="w-9 h-9 rounded-full bg-linen border border-mist flex items-center justify-center overflow-hidden">
+                <AutoMishoCat size={24} interactive={false} />
+              </div>
+              <div>
+                <p className="text-sm font-medium text-graphite">AutoMisho Copilot</p>
+                <p className="text-xs text-ash flex items-center gap-1.5">
+                  <span className="w-1.5 h-1.5 rounded-full bg-signal-blue animate-pulse" />
+                  Asistente activo con visión IA
+                </p>
+              </div>
             </div>
-            <div>
-              <p style={{ color: "#ffffff", fontSize: "14px", fontWeight: 500 }}>AutoMisho</p>
-              <p style={{ color: "#97fcd7", fontSize: "12px", display: "flex", alignItems: "center", gap: "4px" }}>
-                <span style={{ width: "6px", height: "6px", borderRadius: "50%", background: "#97fcd7" }} className="animate-pulse" />
-                En línea
-              </p>
-            </div>
+            <span className="tag text-[11px] text-charcoal">Demo interactiva</span>
           </div>
 
-          {/* Messages — fixed height to avoid jump when content loads */}
-          <div style={{ minHeight: "520px", height: "520px", display: "flex", flexDirection: "column", gap: "16px", overflow: "hidden" }}>
+          {/* Message Thread */}
+          <div className="min-h-[460px] flex flex-col gap-4 overflow-hidden">
             <AnimatePresence>
               {chatMessages.slice(0, visibleMessages).map((msg, index) => (
                 <motion.div
                   key={index}
-                  initial={{ opacity: 0, y: 10 }}
+                  initial={{ opacity: 0, y: 8 }}
                   animate={{ opacity: 1, y: 0 }}
-                  transition={{ duration: 0.3 }}
-                  style={{ display: "flex", justifyContent: msg.role === "user" ? "flex-end" : "flex-start" }}
+                  transition={{ duration: 0.25 }}
+                  className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}
                 >
                   {msg.card ? (
-                    <div style={{ background: "#23524c", border: "1px solid #0f3933", borderRadius: "12px", padding: "16px", maxWidth: "320px" }}>
-                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "8px" }}>
-                        <h4 style={{ color: "#ffffff", fontSize: "14px", fontWeight: 500 }}>{msg.card.title}</h4>
-                        <span style={{ color: "#97fcd7", fontSize: "10px", border: "1px solid #97fcd7", borderRadius: "60px", padding: "2px 8px" }}>{msg.card.source}</span>
+                    <div className="w-full max-w-sm p-4 rounded-xl bg-linen border border-mist shadow-sm">
+                      <div className="flex justify-between items-start gap-2 mb-2">
+                        <h4 className="text-sm font-medium text-graphite">{msg.card.title}</h4>
+                        <span className="text-[10px] px-2 py-0.5 rounded-full border border-signal-blue text-signal-blue font-medium shrink-0">
+                          {msg.card.source}
+                        </span>
                       </div>
-                      <div style={{ display: "flex", alignItems: "center", gap: "16px", marginBottom: "12px" }}>
-                        <span style={{ color: "#97fcd7", fontSize: "28px", fontFamily: "Georgia, serif" }}>{msg.card.price}</span>
-                        <div style={{ display: "flex", alignItems: "center", gap: "8px", color: "#b0c5c1", fontSize: "12px" }}>
-                          <span>{msg.card.year}</span><span>·</span><span>{msg.card.km}</span><span>·</span><span>{msg.card.location}</span>
-                        </div>
+                      <div className="flex items-baseline gap-3 mb-3">
+                        <span className="font-ppmondwest text-2xl text-graphite font-normal">
+                          {msg.card.price}
+                        </span>
+                        <span className="text-xs text-ash">
+                          {msg.card.year} · {msg.card.km} · {msg.card.location}
+                        </span>
                       </div>
-                      <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
-                        <div style={{ flex: 1, height: "8px", background: "#0f3933", borderRadius: "4px", overflow: "hidden" }}>
+                      <div className="flex items-center gap-3">
+                        <div className="flex-1 h-2 bg-mist rounded-full overflow-hidden">
                           <motion.div
                             initial={{ width: 0 }}
                             animate={{ width: `${msg.card.score}%` }}
-                            transition={{ duration: 0.8, delay: 0.3 }}
-                            style={{ height: "100%", background: "linear-gradient(to right, #33998c, #97fcd7)", borderRadius: "4px" }}
+                            transition={{ duration: 0.8, delay: 0.2 }}
+                            className="h-full bg-signal-blue rounded-full"
                           />
                         </div>
-                        <span style={{ color: "#97fcd7", fontSize: "12px" }}>{msg.card.score}/100</span>
+                        <span className="text-xs text-graphite font-medium">
+                          {msg.card.score}/100
+                        </span>
                       </div>
-                      {msg.card.alerts === 0 && (
-                        <p style={{ color: "#97fcd7", fontSize: "12px", marginTop: "8px", display: "flex", alignItems: "center", gap: "4px" }}>
-                          <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
-                            <path d="M3 6 L5 8 L9 4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-                          </svg>
-                          Sin alertas rojas detectadas
-                        </p>
-                      )}
+                      <p className="text-xs text-ash mt-2 flex items-center gap-1.5">
+                        <span className="text-signal-blue font-bold">✓</span>
+                        Carrocería 3p verificada en fotos y sin alertas
+                      </p>
                     </div>
                   ) : (
-                    <div style={{
-                      maxWidth: "80%",
-                      padding: "12px 16px",
-                      borderRadius: msg.role === "user" ? "16px 16px 4px 16px" : "16px 16px 16px 4px",
-                      background: msg.role === "user" ? "#97fcd7" : "#23524c",
-                      color: msg.role === "user" ? "#072724" : "#b0c5c1",
-                      fontSize: "16px",
-                      lineHeight: 1.5,
-                    }}>
+                    <div
+                      className={`max-w-[85%] text-sm px-4 py-3 leading-relaxed ${
+                        msg.role === "user"
+                          ? "bg-linen border border-mist text-graphite font-medium rounded-2xl rounded-br-sm"
+                          : "bg-paper border border-mist text-charcoal rounded-2xl rounded-bl-sm shadow-sm"
+                      }`}
+                    >
                       {msg.loading && visibleMessages === index + 1 ? (
-                        <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-                          <NutSpinner size={20} />
+                        <div className="flex items-center gap-2 text-ash">
+                          <NutSpinner size={16} />
                           <span>{msg.text}</span>
                         </div>
                       ) : (
@@ -172,11 +173,11 @@ export default function Demo() {
               <motion.div
                 initial={{ opacity: 0 }}
                 animate={{ opacity: 1 }}
-                style={{ display: "flex", gap: "4px", padding: "12px 16px" }}
+                className="flex items-center gap-1.5 p-2 text-ash"
               >
-                <span style={{ width: "8px", height: "8px", borderRadius: "50%", background: "rgba(151,252,215,0.5)" }} className="animate-bounce" />
-                <span style={{ width: "8px", height: "8px", borderRadius: "50%", background: "rgba(151,252,215,0.5)" }} className="animate-bounce" />
-                <span style={{ width: "8px", height: "8px", borderRadius: "50%", background: "rgba(151,252,215,0.5)" }} className="animate-bounce" />
+                <span className="w-1.5 h-1.5 rounded-full bg-fog animate-bounce" />
+                <span className="w-1.5 h-1.5 rounded-full bg-fog animate-bounce [animation-delay:0.15s]" />
+                <span className="w-1.5 h-1.5 rounded-full bg-fog animate-bounce [animation-delay:0.3s]" />
               </motion.div>
             )}
           </div>

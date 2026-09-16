@@ -38,6 +38,7 @@ export function detectCarSearch(message: string): {
   maxPrice?: number;
   minPrice?: number;
   doors?: number;
+  colors?: string[];
 } {
   const lower = message.toLowerCase();
   let maxPrice: number | undefined;
@@ -90,6 +91,22 @@ export function detectCarSearch(message: string): {
     doors = 4;
   }
 
+  const requestedColors: string[] = [];
+  const COLOR_PATTERNS: Record<string, RegExp> = {
+    negro: /\b(?:negro|negra|negros|negras|black)\b/i,
+    gris: /\b(?:gris|grises|plata|plateado|plateada|grey|gray|silver)\b/i,
+    blanco: /\b(?:blanco|blanca|blancos|blancas|white)\b/i,
+    rojo: /\b(?:rojo|roja|rojos|rojas|red)\b/i,
+    azul: /\b(?:azul|azules|blue)\b/i,
+    verde: /\b(?:verde|verdes|green)\b/i,
+    amarillo: /\b(?:amarillo|amarilla|amarillos|yellow)\b/i,
+  };
+  for (const [col, regex] of Object.entries(COLOR_PATTERNS)) {
+    if (regex.test(lower)) {
+      requestedColors.push(col);
+    }
+  }
+
   const searchKeywords = [
     "coche", "coches", "vehículo", "vehiculos", "car",
     "busco", "buscar", "quiero", "necesito", "hay",
@@ -109,14 +126,15 @@ export function detectCarSearch(message: string): {
   const hasPriceOrYear = maxPrice !== undefined || /\b20\d{2}\b/.test(lower);
   const hasKPattern = /\d[\d.,]*\s*k\b/i.test(lower);
   const hasDoors = doors !== undefined;
+  const hasColors = requestedColors.length > 0;
   const hasModeloConocido = ["seat", "bmw", "audi", "león", "leon", "ibiza", "golf", "clio", "corolla", "focus", "toyota", "mercedes"].some((m) =>
     lower.includes(m)
   );
 
-  let isSearch = hasSearchIntent || hasPriceOrYear || hasKPattern || hasModeloConocido || hasDoors;
+  let isSearch = hasSearchIntent || hasPriceOrYear || hasKPattern || hasModeloConocido || hasDoors || hasColors;
   if (hasPriceOrYear && !hasSearchIntent) isSearch = true;
 
-  if (!hasSearchIntent && !maxPrice && !hasKPattern && !hasDoors && /\b20\d{2}\b/.test(lower)) {
+  if (!hasSearchIntent && !maxPrice && !hasKPattern && !hasDoors && !hasColors && /\b20\d{2}\b/.test(lower)) {
     isSearch = false;
   }
 
@@ -126,10 +144,54 @@ export function detectCarSearch(message: string): {
     maxPrice,
     minPrice,
     doors,
+    colors: requestedColors.length > 0 ? requestedColors : undefined,
   };
 }
 
 import type { CarResult } from "@/types";
+
+export function isCarMatchingColor(
+  title: string,
+  requestedColors?: string[],
+  visualColor?: string | null
+): boolean {
+  if (!requestedColors || requestedColors.length === 0) return true;
+  const titleLower = title.toLowerCase();
+
+  // 1. If visual color was identified by AI Vision
+  if (visualColor) {
+    const v = visualColor.toLowerCase();
+    const matchesVisual = requestedColors.some((c) => v.includes(c));
+    if (matchesVisual) return true;
+
+    // Explicit conflicting color identified in visual audit -> reject
+    const allKnownColors = ["blanco", "rojo", "azul", "verde", "amarillo", "negro", "gris"];
+    const conflictingColors = allKnownColors.filter((c) => !requestedColors.includes(c));
+    if (conflictingColors.some((oc) => v.includes(oc))) {
+      return false;
+    }
+  }
+
+  // 2. If title explicitly matches one of the requested colors
+  const matchesTitle = requestedColors.some((c) => {
+    const pattern = new RegExp(`\\b(?:${c}|${c}s|${c}a|${c}as)\\b`, "i");
+    return pattern.test(titleLower);
+  });
+  if (matchesTitle) return true;
+
+  // 3. If title explicitly declares a different conflicting color
+  const allKnownColors = ["blanco", "rojo", "azul", "verde", "amarillo", "negro", "gris"];
+  const conflictingColors = allKnownColors.filter((c) => !requestedColors.includes(c));
+  const hasConflictingTitle = conflictingColors.some((c) => {
+    const pattern = new RegExp(`\\b(?:${c}|${c}s|${c}a|${c}as)\\b`, "i");
+    return pattern.test(titleLower);
+  });
+  if (hasConflictingTitle) {
+    return false;
+  }
+
+  return true;
+}
 
 export function isCarMatchingDoors(title: string, url: string = "", requestedDoors?: number): boolean {
   if (!requestedDoors) return true;
@@ -250,7 +312,10 @@ export function enrichCarResult(car: Record<string, unknown>, requestedMaxPrice?
         (u) => typeof u === "string" && u.startsWith("http")
       )
     : [];
-  const images = rawImages.length > 0 ? rawImages : image_url ? [image_url] : [];
+  const images = ensureCarGallery(
+    { title, fuel, image_url, images: rawImages },
+    rawImages.length > 0 ? rawImages : image_url ? [image_url] : []
+  );
 
   return {
     title,
@@ -271,13 +336,64 @@ export function enrichCarResult(car: Record<string, unknown>, requestedMaxPrice?
   };
 }
 
+export function filterRealCarImages(images: (string | undefined | null)[]): string[] {
+  const blacklist = [
+    "ladonnaemobile",
+    "multimarca",
+    "concesionario",
+    "dealer",
+    "logo",
+    "banner",
+    "watermark",
+    "placeholder",
+    "avatar",
+    "icon",
+    "badge",
+    "unsplash.com",
+    "static-cochesnet",
+    "images/icons",
+    "seller-logo",
+    "dealer-logo",
+  ];
+  return images
+    .filter((u): u is string => typeof u === "string" && u.trim().startsWith("http") && !u.endsWith(".svg") && !u.includes(".svg?"))
+    .filter((u) => !blacklist.some((bad) => u.toLowerCase().includes(bad)));
+}
+
+export function ensureCarGallery(
+  car: { title?: string; fuel?: string | null; image_url?: string | null; images?: string[] },
+  existingImages?: string[]
+): string[] {
+  const imgs = (existingImages && existingImages.length > 0)
+    ? [...existingImages]
+    : car.images && car.images.length > 0
+    ? [...car.images]
+    : car.image_url
+    ? [car.image_url]
+    : [];
+
+  const realImages = filterRealCarImages(imgs);
+  const deduped: string[] = [];
+  for (const img of realImages) {
+    if (!deduped.includes(img)) {
+      deduped.push(img);
+    }
+  }
+  return deduped;
+}
+
 export function extractCarsFromMessageContent(content: string): CarResult[] {
   if (!content) return [];
   const match = content.match(/<!--AUTOMISHO_CARS_DATA:([\s\S]*?)-->/);
   if (match && match[1]) {
     try {
       const parsed = JSON.parse(match[1]);
-      if (Array.isArray(parsed)) return parsed as CarResult[];
+      if (Array.isArray(parsed)) {
+        return (parsed as CarResult[]).map((c) => ({
+          ...c,
+          images: ensureCarGallery(c, c.images),
+        }));
+      }
     } catch {
       // ignore
     }

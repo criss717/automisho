@@ -8,8 +8,8 @@ interface PlanCardProps {
 
 const planDetails = {
   free: { name: "Gratis", price: "€0", period: "siempre" },
-  premium: { name: "Premium", price: "€4.99", period: "/mes" },
-  pro: { name: "Pro", price: "€9.99", period: "/mes" },
+  pro: { name: "Pro", price: "€25", period: "/mes" },
+  premium: { name: "Premium", price: "€35", period: "/mes" },
 };
 
 export default function PlanCard({ currentPlan }: PlanCardProps) {
@@ -46,41 +46,59 @@ export default function PlanCard({ currentPlan }: PlanCardProps) {
     }
   };
 
-  const details = planDetails[currentPlan];
+  const details = planDetails[currentPlan] || planDetails.free;
 
   return (
-    <div className="glass-card">
-      <p className="text-xs uppercase tracking-wider text-mint-glow/60 mb-3">Tu plan actual</p>
-      <h3 className="text-xl text-pure-light font-light mb-1">{details.name}</h3>
-      <div className="flex items-baseline gap-1 mb-6">
-        <span className="text-4xl text-mint-glow font-light">{details.price}</span>
-        <span className="text-sm text-mist-gray/60">{details.period}</span>
+    <div className="card p-6 bg-paper border border-mist shadow-subtle rounded-2xl">
+      <p className="text-xs uppercase tracking-wider text-ash mb-3 font-medium">Tu plan actual</p>
+      <h3 className="font-ppmondwest text-2xl text-graphite font-normal mb-1">{details.name}</h3>
+      <div className="flex items-baseline gap-1.5 mb-6">
+        <span className="font-ppmondwest text-4xl text-graphite font-normal">{details.price}</span>
+        <span className="text-sm text-ash font-medium">{details.period}</span>
       </div>
 
       <div className="space-y-3">
         {currentPlan === "free" && (
           <>
             <button
-              onClick={() => handleUpgrade("premium")}
-              disabled={loading === "premium"}
-              className="w-full py-3 px-4 rounded-lg bg-mint-glow text-forest-depths text-sm font-medium hover:shadow-[0_0_12px_rgba(151,252,215,0.4)] transition-all disabled:opacity-50"
-            >
-              {loading === "premium" ? "Redirigiendo..." : "Subir a Premium"}
-            </button>
-            <button
               onClick={() => handleUpgrade("pro")}
               disabled={loading === "pro"}
-              className="w-full py-3 px-4 rounded-lg border border-mint-glow/30 text-mint-glow text-sm hover:bg-mint-glow/10 transition-all disabled:opacity-50"
+              className="btn-primary w-full py-2.5 justify-center text-sm font-medium"
             >
-              {loading === "pro" ? "Redirigiendo..." : "Subir a Pro"}
+              {loading === "pro" ? "Redirigiendo..." : "Subir a Pro (25€/mes)"}
+            </button>
+            <button
+              onClick={() => handleUpgrade("premium")}
+              disabled={loading === "premium"}
+              className="btn-secondary w-full py-2.5 justify-center text-sm font-medium"
+            >
+              {loading === "premium" ? "Redirigiendo..." : "Subir a Premium (35€/mes)"}
             </button>
           </>
         )}
 
-        {(currentPlan === "premium" || currentPlan === "pro") && (
+        {currentPlan === "pro" && (
+          <>
+            <button
+              onClick={() => handleUpgrade("premium")}
+              disabled={loading === "premium"}
+              className="btn-primary w-full py-2.5 justify-center text-sm font-medium"
+            >
+              {loading === "premium" ? "Redirigiendo..." : "Subir a Premium (35€/mes)"}
+            </button>
+            <button
+              onClick={handleManage}
+              className="btn-secondary w-full py-2.5 justify-center text-sm font-medium"
+            >
+              Gestionar suscripción
+            </button>
+          </>
+        )}
+
+        {currentPlan === "premium" && (
           <button
             onClick={handleManage}
-            className="w-full py-3 px-4 rounded-lg border border-mint-glow/30 text-mint-glow text-sm hover:bg-mint-glow/10 transition-all"
+            className="btn-secondary w-full py-2.5 justify-center text-sm font-medium"
           >
             Gestionar suscripción
           </button>

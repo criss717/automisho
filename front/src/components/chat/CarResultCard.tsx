@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
+import { ensureCarGallery } from "@/lib/chat-helpers";
 import type { CarResult } from "@/types";
 
 interface CarResultCardProps {
@@ -64,9 +65,10 @@ export default function CarResultCard({
   const locationLabel = car.location || null;
   const score = typeof car.score === "number" ? Math.min(100, Math.max(0, car.score)) : 84;
 
-  const images = (car.images && car.images.length > 0)
+  const rawImages = (car.images && car.images.length > 0)
     ? car.images
     : (car.image_url ? [car.image_url] : []);
+  const images = ensureCarGallery(car, rawImages);
   const [activeImgIndex, setActiveImgIndex] = useState(0);
 
   const handlePrevImage = (e: React.MouseEvent) => {
@@ -79,6 +81,17 @@ export default function CarResultCard({
     e.preventDefault();
     e.stopPropagation();
     setActiveImgIndex((prev) => (prev < images.length - 1 ? prev + 1 : 0));
+  };
+
+  const handleImageClick = (e: React.MouseEvent<HTMLDivElement>) => {
+    if ((e.target as HTMLElement).closest("button, a")) return;
+    const rect = e.currentTarget.getBoundingClientRect();
+    const clickX = e.clientX - rect.left;
+    if (clickX > rect.width / 2) {
+      handleNextImage(e);
+    } else {
+      handlePrevImage(e);
+    }
   };
 
   const pros = car.pros && car.pros.length > 0 ? car.pros : [
@@ -100,46 +113,46 @@ export default function CarResultCard({
 
   if (variant === "compact") {
     return (
-      <div className="glass-card p-3 rounded-xl border border-white/5 hover:border-mint-glow/30 transition-all max-w-sm">
+      <div className="card p-3 rounded-xl border border-mist hover:border-signal-blue transition-all max-w-sm bg-paper shadow-subtle">
         <div className="flex gap-3 items-center">
           {images.length > 0 ? (
             <img
               src={images[0]}
               alt={car.title}
-              className="w-16 h-16 rounded-lg object-cover bg-midnight-tide shrink-0"
+              className="w-16 h-16 rounded-lg object-cover bg-linen shrink-0 border border-mist"
               onError={(e) => {
                 (e.target as HTMLImageElement).src = "/assets/hero_logo.svg";
-                (e.target as HTMLImageElement).className = "w-16 h-16 p-3 object-contain bg-midnight-tide rounded-lg opacity-60";
+                (e.target as HTMLImageElement).className = "w-16 h-16 p-3 object-contain bg-linen rounded-lg opacity-60";
               }}
             />
           ) : (
-            <div className="w-16 h-16 rounded-lg bg-midnight-tide flex items-center justify-center shrink-0">
+            <div className="w-16 h-16 rounded-lg bg-linen border border-mist flex items-center justify-center shrink-0">
               <img src="/assets/hero_logo.svg" alt="" className="w-8 h-8 opacity-60" />
             </div>
           )}
           <div className="min-w-0 flex-1">
             <div className="flex items-center justify-between gap-1 mb-1">
               <div className="flex items-center gap-1.5 overflow-hidden">
-                <span className="text-[10px] px-2 py-0.5 rounded-full border border-mint-glow/30 text-mint-glow uppercase font-medium shrink-0">
+                <span className="text-[10px] px-2 py-0.5 rounded-full border border-mist text-ash bg-linen uppercase font-medium shrink-0">
                   {car.source}
                 </span>
                 {car.visualAudit?.verified3p && (
-                  <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 font-medium shrink-0 flex items-center gap-1">
+                  <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-linen text-signal-blue border border-signal-blue/40 font-medium shrink-0 flex items-center gap-1">
                     👁️ 3p foto
                   </span>
                 )}
                 {car.visualAudit?.bodyTypeDetected && (
-                  <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 font-medium shrink-0 flex items-center gap-1">
+                  <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-linen text-graphite border border-mist font-medium shrink-0 flex items-center gap-1">
                     🏎️ {car.visualAudit.bodyTypeDetected}
                   </span>
                 )}
               </div>
-              <span className="text-xs text-mint-glow font-medium shrink-0">{score}/100</span>
+              <span className="text-xs text-signal-blue font-medium shrink-0">{score}/100</span>
             </div>
-            <h4 className="text-xs text-pure-light font-medium truncate">{car.title}</h4>
+            <h4 className="text-xs text-graphite font-medium truncate">{car.title}</h4>
             <div className="flex items-center gap-2 mt-1">
-              <span className="text-sm font-teodor text-mint-glow">{priceLabel}</span>
-              <span className="text-[11px] text-mist-gray/60">{yearLabel || kmLabel}</span>
+              <span className="text-sm font-ppmondwest text-graphite">{priceLabel}</span>
+              <span className="text-[11px] text-ash">{yearLabel || kmLabel}</span>
             </div>
           </div>
         </div>
@@ -147,7 +160,7 @@ export default function CarResultCard({
           href={href}
           target="_blank"
           rel="noopener noreferrer"
-          className="mt-2 block text-center text-xs text-mint-glow py-1.5 rounded-lg bg-mint-glow/10 hover:bg-mint-glow/20 border border-mint-glow/20 transition-all font-medium"
+          className="mt-2 block text-center text-xs text-signal-blue py-1.5 rounded-lg border border-signal-blue hover:bg-signal-blue/10 transition-all font-medium"
         >
           Ver anuncio en {car.source} ↗
         </a>
@@ -160,10 +173,13 @@ export default function CarResultCard({
       initial={{ opacity: 0, y: 12 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.35 }}
-      className="glass-card p-0 rounded-2xl border border-white/8 overflow-hidden hover:border-mint-glow/30 hover:shadow-[0_0_25px_rgba(151,252,215,0.12)] transition-all flex flex-col h-full group"
+      className="card p-0 rounded-2xl border border-mist overflow-hidden hover:border-signal-blue hover:shadow-md transition-all flex flex-col h-full group bg-paper shadow-subtle"
     >
       {/* Header Image Gallery & Source Badge */}
-      <div className="relative w-full h-48 bg-gradient-to-t from-forest-depths to-midnight-tide overflow-hidden shrink-0 select-none">
+      <div
+        onClick={handleImageClick}
+        className="relative w-full h-48 bg-linen overflow-hidden shrink-0 select-none border-b border-mist cursor-pointer group/gallery"
+      >
         <AnimatePresence mode="wait">
           {images.length > 0 ? (
             <motion.img
@@ -184,7 +200,7 @@ export default function CarResultCard({
           ) : (
             <div className="w-full h-full flex flex-col items-center justify-center gap-2">
               <img src="/assets/hero_logo.svg" alt="AutoMisho" className="w-12 h-12 opacity-40" />
-              <span className="text-xs text-mist-gray/40">Foto no disponible en anuncio</span>
+              <span className="text-xs text-ash">Foto no disponible en anuncio</span>
             </div>
           )}
         </AnimatePresence>
@@ -196,7 +212,8 @@ export default function CarResultCard({
               type="button"
               onClick={handlePrevImage}
               aria-label="Foto anterior"
-              className="absolute left-2.5 top-1/2 -translate-y-1/2 z-20 w-8 h-8 rounded-full bg-forest-depths/80 hover:bg-forest-depths text-pure-light backdrop-blur-md border border-white/25 flex items-center justify-center opacity-85 hover:opacity-100 hover:scale-110 hover:border-mint-glow/60 transition-all shadow-lg cursor-pointer"
+              title="Foto anterior (o haz clic en el lado izquierdo)"
+              className="absolute left-2.5 top-1/2 -translate-y-1/2 z-20 w-8 h-8 rounded-full bg-paper/95 hover:bg-paper text-graphite border border-mist flex items-center justify-center opacity-90 hover:opacity-100 hover:scale-110 active:scale-95 transition-all shadow-md cursor-pointer"
             >
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
                 <path d="M15 18l-6-6 6-6" />
@@ -206,7 +223,8 @@ export default function CarResultCard({
               type="button"
               onClick={handleNextImage}
               aria-label="Siguiente foto"
-              className="absolute right-2.5 top-1/2 -translate-y-1/2 z-20 w-8 h-8 rounded-full bg-forest-depths/80 hover:bg-forest-depths text-pure-light backdrop-blur-md border border-white/25 flex items-center justify-center opacity-85 hover:opacity-100 hover:scale-110 hover:border-mint-glow/60 transition-all shadow-lg cursor-pointer"
+              title="Siguiente foto (o haz clic en el lado derecho)"
+              className="absolute right-2.5 top-1/2 -translate-y-1/2 z-20 w-8 h-8 rounded-full bg-paper/95 hover:bg-paper text-graphite border border-mist flex items-center justify-center opacity-90 hover:opacity-100 hover:scale-110 active:scale-95 transition-all shadow-md cursor-pointer"
             >
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
                 <path d="M9 18l6-6-6-6" />
@@ -214,7 +232,7 @@ export default function CarResultCard({
             </button>
 
             {/* Pagination Dots */}
-            <div className="absolute bottom-2.5 left-1/2 -translate-x-1/2 z-20 flex items-center gap-1.5 bg-forest-depths/80 backdrop-blur-md px-2.5 py-1 rounded-full border border-white/10 shadow-sm">
+            <div className="absolute bottom-2.5 left-1/2 -translate-x-1/2 z-20 flex items-center gap-1.5 bg-paper/90 px-2.5 py-1 rounded-full border border-mist shadow-sm">
               {images.map((_, dotIdx) => (
                 <button
                   key={dotIdx}
@@ -226,8 +244,8 @@ export default function CarResultCard({
                   }}
                   className={`h-1.5 rounded-full transition-all cursor-pointer ${
                     dotIdx === activeImgIndex
-                      ? "w-4 bg-mint-glow shadow-[0_0_8px_rgba(151,252,215,0.6)]"
-                      : "w-1.5 bg-white/40 hover:bg-white/75"
+                      ? "w-4 bg-signal-blue"
+                      : "w-1.5 bg-fog hover:bg-ash"
                   }`}
                   aria-label={`Ver foto ${dotIdx + 1}`}
                 />
@@ -235,7 +253,7 @@ export default function CarResultCard({
             </div>
 
             {/* Photo Counter Badge */}
-            <div className="absolute bottom-2.5 right-3 z-20 flex items-center gap-1 bg-forest-depths/85 backdrop-blur-md px-2 py-0.5 rounded-full border border-white/10 text-[10px] text-pure-light font-medium shadow-sm">
+            <div className="absolute bottom-2.5 right-3 z-20 flex items-center gap-1 bg-paper/90 px-2 py-0.5 rounded-full border border-mist text-[10px] text-graphite font-medium shadow-sm">
               <span>{activeImgIndex + 1}/{images.length}</span>
             </div>
           </>
@@ -243,42 +261,42 @@ export default function CarResultCard({
 
         {/* Badges Overlays */}
         <div className="absolute top-3 left-3 z-10 flex flex-wrap items-center gap-1.5 max-w-[70%]">
-          <span className="text-[11px] font-medium tracking-wide uppercase px-2.5 py-1 rounded-full bg-forest-depths/85 backdrop-blur-md text-mint-glow border border-mint-glow/30 shadow-sm">
+          <span className="text-[11px] font-medium tracking-wide uppercase px-2.5 py-1 rounded-full bg-paper/95 text-graphite border border-mist shadow-sm">
             {car.source}
           </span>
           {car.visualAudit?.verified3p && (
-            <span className="text-[10px] font-medium tracking-wide px-2 py-0.5 rounded-full bg-forest-depths/90 backdrop-blur-md text-cyan-300 border border-cyan-400/40 shadow-sm flex items-center gap-1">
+            <span className="text-[10px] font-medium tracking-wide px-2 py-0.5 rounded-full bg-paper/95 text-signal-blue border border-signal-blue/50 shadow-sm flex items-center gap-1">
               👁️ 3p Verificado
             </span>
           )}
           {car.visualAudit?.bodyTypeDetected && (
-            <span className="text-[10px] font-medium tracking-wide px-2 py-0.5 rounded-full bg-forest-depths/90 backdrop-blur-md text-emerald-300 border border-emerald-400/40 shadow-sm flex items-center gap-1">
+            <span className="text-[10px] font-medium tracking-wide px-2 py-0.5 rounded-full bg-paper/95 text-graphite border border-mist shadow-sm flex items-center gap-1">
               🏎️ {car.visualAudit.bodyTypeDetected}
             </span>
           )}
           {car.visualAudit?.colorDetected && (
-            <span className="text-[10px] font-medium tracking-wide px-2 py-0.5 rounded-full bg-forest-depths/90 backdrop-blur-md text-amber-300 border border-amber-400/40 shadow-sm flex items-center gap-1">
+            <span className="text-[10px] font-medium tracking-wide px-2 py-0.5 rounded-full bg-paper/95 text-graphite border border-mist shadow-sm flex items-center gap-1">
               🎨 {car.visualAudit.colorDetected}
             </span>
           )}
           {car.visualAudit?.flipOpportunity?.flipPotential && ["Alto", "Medio"].includes(car.visualAudit.flipOpportunity.flipPotential) && (
-            <span className="text-[10px] font-semibold tracking-wide px-2 py-0.5 rounded-full bg-emerald-950/90 backdrop-blur-md text-emerald-300 border border-emerald-500/50 shadow-sm flex items-center gap-1">
+            <span className="text-[10px] font-semibold tracking-wide px-2 py-0.5 rounded-full bg-linen text-signal-blue border border-signal-blue shadow-sm flex items-center gap-1">
               💰 Reventa: {car.visualAudit.flipOpportunity.flipPotential}
             </span>
           )}
         </div>
 
         {/* Score indicator badge */}
-        <div className="absolute top-3 right-3 z-10 flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-forest-depths/85 backdrop-blur-md border border-mint-glow/30 shadow-sm">
-          <svg width="12" height="12" viewBox="0 0 16 16" fill="none" className="text-mint-glow">
+        <div className="absolute top-3 right-3 z-10 flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-paper/95 border border-mist shadow-sm">
+          <svg width="12" height="12" viewBox="0 0 16 16" fill="none" className="text-signal-blue">
             <path d="M8 1.5l1.9 4.3 4.7.4-3.5 3.1 1 4.6L8 11.5 3.9 13.9l1-4.6-3.5-3.1 4.7-.4L8 1.5z" fill="currentColor" />
           </svg>
-          <span className="text-xs font-semibold text-mint-glow">{score}/100</span>
+          <span className="text-xs font-semibold text-graphite">{score}/100</span>
         </div>
 
         {/* Price bottom overlay tag */}
         <div className="absolute bottom-3 left-3 z-10">
-          <span className="text-2xl font-teodor text-pure-light drop-shadow-md bg-forest-depths/80 backdrop-blur-md px-3 py-1 rounded-xl border border-white/10">
+          <span className="text-2xl font-ppmondwest text-graphite drop-shadow-sm bg-paper/95 px-3 py-1 rounded-xl border border-mist">
             {priceLabel}
           </span>
         </div>
@@ -288,32 +306,32 @@ export default function CarResultCard({
       <div className="p-5 flex-1 flex flex-col justify-between space-y-4">
         <div>
           {/* Title */}
-          <h3 className="text-base text-pure-light font-medium line-clamp-2 leading-snug mb-3">
+          <h3 className="text-base text-graphite font-medium line-clamp-2 leading-snug mb-3">
             {car.title}
           </h3>
 
           {/* Quick Specs Chips */}
-          <div className="flex flex-wrap items-center gap-2 text-xs text-mist-gray mb-3">
+          <div className="flex flex-wrap items-center gap-2 text-xs text-charcoal mb-3">
             {car.doors && (
-              <span className="px-2.5 py-1 rounded-md bg-white/5 border border-white/5 flex items-center gap-1">
+              <span className="px-2.5 py-1 rounded-md bg-linen border border-mist flex items-center gap-1">
                 🚪 {car.doors}p
               </span>
             )}
             {yearLabel && (
-              <span className="px-2.5 py-1 rounded-md bg-white/5 border border-white/5 flex items-center gap-1">
+              <span className="px-2.5 py-1 rounded-md bg-linen border border-mist flex items-center gap-1">
                 📅 {yearLabel}
               </span>
             )}
-            <span className="px-2.5 py-1 rounded-md bg-white/5 border border-white/5 flex items-center gap-1">
+            <span className="px-2.5 py-1 rounded-md bg-linen border border-mist flex items-center gap-1">
               🛣️ {kmLabel}
             </span>
             {car.fuel && (
-              <span className="px-2.5 py-1 rounded-md bg-white/5 border border-white/5 flex items-center gap-1">
+              <span className="px-2.5 py-1 rounded-md bg-linen border border-mist flex items-center gap-1">
                 ⛽ {car.fuel}
               </span>
             )}
             {locationLabel && (
-              <span className="px-2.5 py-1 rounded-md bg-white/5 border border-white/5 flex items-center gap-1">
+              <span className="px-2.5 py-1 rounded-md bg-linen border border-mist flex items-center gap-1">
                 📍 {locationLabel}
               </span>
             )}
@@ -321,15 +339,15 @@ export default function CarResultCard({
 
           {/* Visual AI Audit Highlight (Body & Match Notes) */}
           {(car.visualAudit?.bodyCondition || car.visualAudit?.criteriaNotes) && (
-            <div className="mb-3.5 p-2.5 rounded-xl bg-cyan-950/40 border border-cyan-500/25 text-xs text-cyan-200/90 flex items-start gap-2 shadow-inner">
-              <span className="shrink-0 text-cyan-400 text-sm">👁️</span>
+            <div className="mb-3.5 p-3 rounded-xl bg-linen border border-mist text-xs text-charcoal flex items-start gap-2 shadow-inner">
+              <span className="shrink-0 text-signal-blue text-sm">👁️</span>
               <div className="leading-snug space-y-0.5">
-                <span className="font-semibold text-cyan-300">Auditoría Visual IA: </span>
+                <span className="font-semibold text-graphite">Auditoría Visual IA: </span>
                 {car.visualAudit.criteriaNotes && (
-                  <span className="text-pure-light block">{car.visualAudit.criteriaNotes}</span>
+                  <span className="text-graphite block">{car.visualAudit.criteriaNotes}</span>
                 )}
                 {car.visualAudit.bodyCondition && (
-                  <span className="text-cyan-200/80 block">{car.visualAudit.bodyCondition}</span>
+                  <span className="text-charcoal block">{car.visualAudit.bodyCondition}</span>
                 )}
               </div>
             </div>
@@ -337,16 +355,16 @@ export default function CarResultCard({
 
           {/* Flip / Resale Opportunity Card */}
           {car.visualAudit?.flipOpportunity?.flipPotential && ["Alto", "Medio"].includes(car.visualAudit.flipOpportunity.flipPotential) && (
-            <div className="mb-3.5 p-2.5 rounded-xl bg-emerald-950/30 border border-emerald-500/30 text-xs text-emerald-200/90 flex items-start gap-2 shadow-inner">
-              <span className="shrink-0 text-emerald-400 text-sm">📈</span>
+            <div className="mb-3.5 p-3 rounded-xl bg-linen border border-mist text-xs text-charcoal flex items-start gap-2 shadow-inner">
+              <span className="shrink-0 text-signal-blue text-sm">📈</span>
               <div className="leading-snug space-y-1 w-full">
                 <div className="flex items-center justify-between">
-                  <span className="font-semibold text-emerald-300">Oportunidad Reventa / Negocio:</span>
-                  <span className="px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300 font-bold text-[10px]">
+                  <span className="font-semibold text-graphite">Oportunidad Reventa / Negocio:</span>
+                  <span className="px-1.5 py-0.5 rounded bg-paper border border-signal-blue text-signal-blue font-bold text-[10px]">
                     {car.visualAudit.flipOpportunity.flipPotential} potencial
                   </span>
                 </div>
-                <p className="text-[11px] text-mist-gray">
+                <p className="text-[11px] text-charcoal">
                   <strong>Estado:</strong> {car.visualAudit.flipOpportunity.damageSummary || "Sin daños visibles"}
                   {car.visualAudit.flipOpportunity.estimatedRepairCost && ` • Reparación est.: ${car.visualAudit.flipOpportunity.estimatedRepairCost}`}
                 </p>
@@ -357,34 +375,31 @@ export default function CarResultCard({
           {/* Match Score Meter */}
           <div className="space-y-1.5 mb-4">
             <div className="flex justify-between text-[11px]">
-              <span className="text-mist-gray/70">Coincidencia IA</span>
-              <span className="text-mint-glow font-medium">
+              <span className="text-ash">Coincidencia IA</span>
+              <span className="text-signal-blue font-medium">
                 {score >= 90 ? "Excelente opción" : score >= 80 ? "Buena oportunidad" : "Revisión recomendada"}
               </span>
             </div>
-            <div className="h-1.5 w-full bg-midnight-tide rounded-full overflow-hidden">
+            <div className="h-1.5 w-full bg-mist rounded-full overflow-hidden">
               <motion.div
                 initial={{ width: 0 }}
                 animate={{ width: `${score}%` }}
                 transition={{ duration: 0.8, delay: 0.2 }}
-                className="h-full rounded-full"
-                style={{
-                  background: "linear-gradient(to right, var(--color-teal-pulse), var(--color-mint-glow))",
-                }}
+                className="h-full rounded-full bg-signal-blue"
               />
             </div>
           </div>
 
           {/* Pros (Ventajas) */}
           <div className="space-y-2 mb-3">
-            <p className="text-[11px] uppercase tracking-wider text-mint-glow font-medium flex items-center gap-1">
-              <span className="w-1.5 h-1.5 rounded-full bg-mint-glow" />
+            <p className="text-[11px] uppercase tracking-wider text-graphite font-medium flex items-center gap-1">
+              <span className="w-1.5 h-1.5 rounded-full bg-signal-blue" />
               Ventajas detectadas:
             </p>
             <div className="space-y-1">
               {pros.map((pro, idx) => (
-                <div key={idx} className="flex items-start gap-1.5 text-xs text-mist-gray/90">
-                  <span className="text-mint-glow font-bold shrink-0">✓</span>
+                <div key={idx} className="flex items-start gap-1.5 text-xs text-charcoal">
+                  <span className="text-signal-blue font-bold shrink-0">✓</span>
                   <span className="leading-tight">{pro}</span>
                 </div>
               ))}
@@ -393,14 +408,14 @@ export default function CarResultCard({
 
           {/* Cons (Desventajas o Puntos a revisar) */}
           <div className="space-y-2">
-            <p className="text-[11px] uppercase tracking-wider text-amber-400/90 font-medium flex items-center gap-1">
-              <span className="w-1.5 h-1.5 rounded-full bg-amber-400" />
+            <p className="text-[11px] uppercase tracking-wider text-charcoal font-medium flex items-center gap-1">
+              <span className="w-1.5 h-1.5 rounded-full bg-ash" />
               Puntos a revisar:
             </p>
             <div className="space-y-1">
               {cons.map((con, idx) => (
-                <div key={idx} className="flex items-start gap-1.5 text-xs text-mist-gray/80">
-                  <span className="text-amber-400 font-bold shrink-0">⚠</span>
+                <div key={idx} className="flex items-start gap-1.5 text-xs text-ash">
+                  <span className="text-ash font-bold shrink-0">⚠</span>
                   <span className="leading-tight">{con}</span>
                 </div>
               ))}
@@ -409,12 +424,12 @@ export default function CarResultCard({
         </div>
 
         {/* Action Buttons */}
-        <div className="pt-3 border-t border-white/5 flex items-center gap-2">
+        <div className="pt-3 border-t border-mist flex items-center gap-2">
           <a
             href={href}
             target="_blank"
             rel="noopener noreferrer"
-            className="flex-1 py-2.5 px-4 rounded-xl bg-mint-glow text-forest-depths font-medium text-xs text-center hover:shadow-[0_0_15px_rgba(151,252,215,0.4)] transition-all flex items-center justify-center gap-1.5 group/btn"
+            className="btn-primary flex-1 py-2 px-3 text-xs font-medium text-center flex items-center justify-center gap-1.5 group/btn"
           >
             <span>Ver anuncio en {car.source}</span>
             <span className="group-hover/btn:translate-x-0.5 group-hover/btn:-translate-y-0.5 transition-transform">↗</span>
@@ -424,7 +439,7 @@ export default function CarResultCard({
             <button
               onClick={handleAsk}
               title="Preguntar a AutoMisho sobre este coche"
-              className="p-2.5 rounded-xl border border-mint-glow/30 text-mint-glow hover:bg-mint-glow/10 hover:border-mint-glow/60 transition-all shrink-0 flex items-center justify-center"
+              className="btn-secondary p-2 rounded-lg text-xs shrink-0 flex items-center justify-center"
             >
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                 <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
