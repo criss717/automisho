@@ -2,8 +2,12 @@ import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 import { createAnthropic } from "@ai-sdk/anthropic";
 import { createGoogleGenerativeAI } from "@ai-sdk/google";
 
-export const CHAT_MODEL = process.env.OPENCODE_MODEL || "qwen3.7-plus";
+export const CHAT_MODEL = process.env.DEFAULT_AGENT_MODEL || process.env.COMMANDCODE_MODEL || "meta/muse-spark-1.3";
 export const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-2.5-flash";
+
+export function isCommandCodeConfigured(): boolean {
+  return Boolean(process.env.COMMANDCODE_API_KEY);
+}
 
 export function isOpenCodeConfigured(): boolean {
   return Boolean(process.env.OPENCODE_API_KEY && process.env.OPENCODE_BASE_URL);
@@ -11,6 +15,17 @@ export function isOpenCodeConfigured(): boolean {
 
 export function isGeminiConfigured(): boolean {
   return Boolean(process.env.GEMINI_API_KEY);
+}
+
+export function getCommandCodeModel(modelId: string = CHAT_MODEL) {
+  const baseURL = process.env.COMMANDCODE_BASE_URL || "https://api.commandcode.ai/provider/v1";
+  const apiKey = process.env.COMMANDCODE_API_KEY || "";
+  const ccProvider = createOpenAICompatible({
+    name: "commandcode-provider",
+    baseURL,
+    apiKey,
+  });
+  return ccProvider(modelId);
 }
 
 // OpenCode Go tiene dos familias de endpoints según el modelo:
@@ -54,18 +69,22 @@ export function getGeminiModel(modelId: string = GEMINI_MODEL) {
 
 /**
  * Obtiene el modelo activo según configuración:
- * 1. OpenCode Go si está configurado
- * 2. Google Gemini como fallback si OpenCode no está configurado
+ * 1. Command Code Provider API (Muse Spark 1.3 u otro) si está configurado
+ * 2. OpenCode Go si está configurado
+ * 3. Google Gemini como fallback
  */
 export function getChatModel(modelId: string = CHAT_MODEL) {
+  if (isCommandCodeConfigured()) {
+    return getCommandCodeModel(modelId);
+  }
   if (isOpenCodeConfigured()) {
     return getOpenCodeModel(modelId);
   }
   if (isGeminiConfigured()) {
     return getGeminiModel(GEMINI_MODEL);
   }
-  // Retorna OpenCode como fallback por defecto
-  return getOpenCodeModel(modelId);
+  // Fallback a Command Code con defaults
+  return getCommandCodeModel(modelId);
 }
 
 export const AUTOMISHO_SYSTEM_PROMPT = `Eres AutoMisho, el copiloto IA experto en compraventa y negociación de coches de segunda mano en España.

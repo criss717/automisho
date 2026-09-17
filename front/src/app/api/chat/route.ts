@@ -11,8 +11,10 @@ import {
   CHAT_MODEL,
   GEMINI_MODEL,
   AUTOMISHO_SYSTEM_PROMPT,
+  isCommandCodeConfigured,
   isOpenCodeConfigured,
   isGeminiConfigured,
+  getCommandCodeModel,
   getOpenCodeModel,
   getGeminiModel,
 } from "@/lib/ai";
@@ -332,10 +334,35 @@ export async function POST(req: Request) {
         let fullText = "";
         let streamSuccess = false;
 
-        // 1. Primary Attempt: OpenCode Go (if configured)
-        if (isOpenCodeConfigured()) {
+        // 1. Primary Attempt: Command Code Provider API (Muse Spark 1.3 u otro)
+        if (isCommandCodeConfigured()) {
           try {
-            console.log(`[chat] Attempting primary provider: OpenCode Go (${CHAT_MODEL})`);
+            console.log(`[chat] Attempting primary provider: Command Code Provider API (${CHAT_MODEL})`);
+            const ccResult = streamText({
+              model: getCommandCodeModel(CHAT_MODEL),
+              system: systemPrompt,
+              messages: modelMessages,
+              abortSignal: abortController.signal as unknown as AbortSignal,
+            });
+
+            for await (const chunk of ccResult.textStream) {
+              streamSuccess = true;
+              fullText += chunk;
+              writer.write({
+                type: "text-delta",
+                id: streamId,
+                delta: chunk,
+              });
+            }
+          } catch (ccErr) {
+            console.warn("[chat] Command Code Provider API failed, checking next fallback:", ccErr);
+          }
+        }
+
+        // 2. Secondary Attempt: OpenCode Go (if configured and primary failed)
+        if (!streamSuccess && isOpenCodeConfigured()) {
+          try {
+            console.log(`[chat] Attempting fallback provider: OpenCode Go (${CHAT_MODEL})`);
             const openCodeResult = streamText({
               model: getOpenCodeModel(CHAT_MODEL),
               system: systemPrompt,
@@ -353,11 +380,11 @@ export async function POST(req: Request) {
               });
             }
           } catch (openCodeErr) {
-            console.warn("[chat] OpenCode Go failed, checking fallback:", openCodeErr);
+            console.warn("[chat] OpenCode Go failed, checking Gemini fallback:", openCodeErr);
           }
         }
 
-        // 2. Fallback Attempt: Google Gemini (if OpenCode failed or produced no output)
+        // 3. Third Attempt: Google Gemini (if previous providers failed)
         if (!streamSuccess && isGeminiConfigured()) {
           try {
             console.log(`[chat] Fallback activated: Using Google Gemini (${GEMINI_MODEL})`);
