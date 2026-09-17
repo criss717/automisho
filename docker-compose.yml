@@ -72,6 +72,8 @@ services:
       context: ./front
       dockerfile: Dockerfile
     container_name: automisho-front
+    env_file:
+      - ./front/.env.local
     environment:
       - BACKEND_URL=http://automisho-orchestrator:8000
       - DATABASE_URL=postgresql://${POSTGRES_USER:-automisho}:${POSTGRES_PASSWORD:-automisho_secret}@automisho-db:5432/${POSTGRES_DB:-automisho}
