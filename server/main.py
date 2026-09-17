@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from routers import scrape, dgt, carvertical, carfax
+from routers import scrape, dgt, carvertical, carfax, agent
 from models.schemas import HealthResponse
 import logging
 
@@ -38,6 +38,7 @@ app.add_middleware(
 )
 
 # Register routers
+app.include_router(agent.router)
 app.include_router(scrape.router)
 app.include_router(dgt.router)
 app.include_router(carvertical.router)
