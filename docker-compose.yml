@@ -73,6 +73,7 @@ services:
     env_file:
       - ./front/.env.local
     environment:
+      - AUTH_TRUST_HOST=true
       - BACKEND_URL=http://automisho-orchestrator:8000
       - DATABASE_URL=postgresql://${POSTGRES_USER:-automisho}:${POSTGRES_PASSWORD:-automisho_secret}@automisho-db:5432/${POSTGRES_DB:-automisho}
       - NEXTAUTH_URL=http://localhost:3000
