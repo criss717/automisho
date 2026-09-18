@@ -18,7 +18,7 @@ RUN npx prisma generate
 COPY . .
 
 # Build Next.js
-RUN pnpm run build -- --webpack
+RUN pnpm run build
 
 EXPOSE 3000
 
