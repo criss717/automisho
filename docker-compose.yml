@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   # 1. Base de datos relacional + memoria semántica vectorial (pgvector)
   automisho-db:
