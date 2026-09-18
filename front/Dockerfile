@@ -4,22 +4,22 @@ WORKDIR /app
 
 ENV NODE_ENV=production
 ENV PORT=3000
+ENV NEXT_TELEMETRY_DISABLED=1
 
-# Install dependencies needed for sharp / native modules if any
 RUN apk add --no-cache libc6-compat
+RUN corepack enable && corepack prepare pnpm@latest --activate
 
-COPY package.json package-lock.json* ./
+COPY package.json pnpm-lock.yaml ./
 COPY prisma ./prisma/
 
-RUN npm ci --ignore-scripts
+RUN pnpm install --frozen-lockfile --ignore-scripts
 RUN npx prisma generate
 
 COPY . .
 
 # Build Next.js
-ENV NEXT_TELEMETRY_DISABLED=1
-RUN npm run build -- --webpack
+RUN pnpm run build -- --webpack
 
 EXPOSE 3000
 
-CMD ["npm", "run", "start"]
+CMD ["pnpm", "run", "start"]
