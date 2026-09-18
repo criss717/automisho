@@ -13,20 +13,18 @@ export function getStripe(): Stripe {
   return _stripe;
 }
 
-function requireEnv(key: string): string {
-  const val = process.env[key];
-  if (!val) throw new Error(`Missing ${key} env`);
-  return val;
+function getEnv(key: string, fallback: string = ""): string {
+  return process.env[key] || fallback;
 }
 
 export const STRIPE_PLANS = {
-  premium: requireEnv("STRIPE_PREMIUM_PRICE_ID"),
-  pro: requireEnv("STRIPE_PRO_PRICE_ID"),
+  premium: getEnv("STRIPE_PREMIUM_PRICE_ID", "price_premium_placeholder"),
+  pro: getEnv("STRIPE_PRO_PRICE_ID", "price_pro_placeholder"),
 } as const;
 
 export type PlanKey = keyof typeof STRIPE_PLANS;
 
 export const PRICE_TO_PLAN: Record<string, PlanKey> = {
-  [process.env.STRIPE_PREMIUM_PRICE_ID as string]: "premium",
-  [process.env.STRIPE_PRO_PRICE_ID as string]: "pro",
+  [getEnv("STRIPE_PREMIUM_PRICE_ID", "price_premium_placeholder")]: "premium",
+  [getEnv("STRIPE_PRO_PRICE_ID", "price_pro_placeholder")]: "pro",
 };
