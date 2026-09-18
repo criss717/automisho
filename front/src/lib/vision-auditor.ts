@@ -23,9 +23,9 @@ export async function auditSingleCarImage(
     typeof options === "number" ? { requestedDoors: options } : options || {};
 
   try {
-    // 1. Fetch the image buffer with strict 2.5s timeout
+    // 1. Fetch the image buffer with strict 8s timeout
     const fetchController = new AbortController();
-    const fetchTimeout = setTimeout(() => fetchController.abort(), 2500);
+    const fetchTimeout = setTimeout(() => fetchController.abort(), 8000);
 
     const imgRes = await fetch(imageUrl, {
       signal: fetchController.signal,
@@ -94,11 +94,11 @@ Responde ÚNICAMENTE un JSON válido con este formato:
               ],
             },
           ],
-          abortSignal: AbortSignal.timeout(4000),
+          abortSignal: AbortSignal.timeout(20000),
         });
         responseText = result.text;
       } catch (visionErr) {
-        console.warn("[vision] CommandCode Vision error:", (visionErr as Error).message);
+        console.warn("[vision] CommandCode Vision error for", carTitle, ":", (visionErr as Error).message);
       }
     }
 
@@ -143,7 +143,26 @@ Responde ÚNICAMENTE un JSON válido con este formato:
 }
 
 /**
- * Audits a batch of cars in parallel, enriching them with visual inspection data.
+ * Runs vision audits in bounded batches (default 2 at a time) to avoid
+ * provider rate limits while keeping total latency acceptable.
+ */
+async function auditInBatches(
+  cars: CarResult[],
+  auditOne: (car: CarResult) => Promise<CarResult>,
+  batchSize: number
+): Promise<PromiseSettledResult<CarResult>[]> {
+  const results: PromiseSettledResult<CarResult>[] = [];
+  for (let i = 0; i < cars.length; i += batchSize) {
+    const batch = cars.slice(i, i + batchSize);
+    const settled = await Promise.allSettled(batch.map(auditOne));
+    results.push(...settled);
+  }
+  return results;
+}
+
+/**
+ * Audits a batch of cars with bounded concurrency (2 at a time),
+ * enriching them with visual inspection data.
  */
 export async function auditCarVisuals(
   cars: CarResult[],
@@ -155,11 +174,11 @@ export async function auditCarVisuals(
     typeof options === "number" ? { requestedDoors: options } : options || {};
   const requestedDoors = opts.requestedDoors;
 
-  // Audit up to the top 4 candidates to keep latency under 2.5s
+  // Audit up to the top 4 candidates, 2 at a time to avoid provider rate limits
   const topCandidates = cars.slice(0, 4);
   const remainingCars = cars.slice(4);
 
-  const auditPromises = topCandidates.map(async (car) => {
+  const auditOne = async (car: CarResult): Promise<CarResult> => {
     if (!car.image_url) return car;
 
     const visualAudit = await auditSingleCarImage(car.image_url, car.title, {
@@ -226,9 +245,9 @@ export async function auditCarVisuals(
     enrichedCar.pros = pros;
     enrichedCar.cons = cons;
     return enrichedCar;
-  });
+  };
 
-  const settled = await Promise.allSettled(auditPromises);
+  const settled = await auditInBatches(topCandidates, auditOne, 2);
   const auditedTop = settled.map((res, i) => (res.status === "fulfilled" ? res.value : topCandidates[i]));
 
   // Re-sort: cars matching user criteria first, then by score

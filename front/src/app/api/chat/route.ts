@@ -24,7 +24,7 @@ import { lookupVehicleDgt } from "@/lib/dgt-client";
 
 async function searchBackend(query: string, maxPrice?: number, minPrice?: number, searchMode: string = "standard", doors?: number) {
   const controller = new AbortController();
-  const timeoutMs = searchMode === "deep" ? 9000 : 6000;
+  const timeoutMs = searchMode === "deep" ? 40000 : 25000;
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
   try {
     const backendSource = searchMode === "deep" ? "deep" : "standard";
@@ -47,6 +47,32 @@ async function searchBackend(query: string, maxPrice?: number, minPrice?: number
   } catch (e) {
     if ((e as Error).name === "AbortError") console.warn("[chat] searchBackend timeout");
     else console.error("[chat] searchBackend error", e);
+    return null;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function agentSearchBackend(userText: string) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 45000);
+  try {
+    const res = await fetch(`${BACKEND_URL}/agent/chat`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        messages: [{ role: "user", content: userText }],
+      }),
+      signal: controller.signal,
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    const cars = (data as { cars_data?: unknown }).cars_data;
+    if (!Array.isArray(cars) || cars.length === 0) return null;
+    return { results: cars, source: "agent", total: cars.length };
+  } catch (e) {
+    if ((e as Error).name === "AbortError") console.warn("[chat] agentSearchBackend timeout");
+    else console.error("[chat] agentSearchBackend error", e);
     return null;
   } finally {
     clearTimeout(timeout);
@@ -134,8 +160,36 @@ export async function POST(req: Request) {
     }
 
     if (search.isSearch) {
-      const searchResults = await searchBackend(search.query, search.maxPrice, search.minPrice, searchMode, search.doors);
-      console.log("[chat] search results:", searchResults?.total ?? 0, "from", searchResults?.source, "mode:", searchMode, "maxPrice", search.maxPrice, "doors:", search.doors);
+      // Agent and direct scrape run in parallel; prefer the agent when it
+      // returns non-empty cars, else fall back to scrape, else null.
+      const [agentSettled, scrapeSettled] = await Promise.allSettled([
+        agentSearchBackend(userText),
+        searchBackend(search.query, search.maxPrice, search.minPrice, searchMode, search.doors),
+      ]);
+      const agentResults =
+        agentSettled.status === "fulfilled" ? agentSettled.value : null;
+      const scrapeResults =
+        scrapeSettled.status === "fulfilled" ? scrapeSettled.value : null;
+      const hasAgentCars =
+        agentResults != null &&
+        Array.isArray((agentResults as { results?: unknown }).results) &&
+        ((agentResults as { results: unknown[] }).results.length > 0);
+      const hasScrapeCars =
+        scrapeResults != null &&
+        Array.isArray((scrapeResults as { results?: unknown }).results) &&
+        ((scrapeResults as { results: unknown[] }).results.length > 0);
+      const searchResults = hasAgentCars
+        ? agentResults
+        : hasScrapeCars
+          ? scrapeResults
+          : null;
+      const chosen = hasAgentCars
+        ? "agent"
+        : hasScrapeCars
+          ? (scrapeResults as { source?: string } | null)?.source ?? "scrape"
+          : "none";
+      console.log("[chat] agent:", agentSettled.status, hasAgentCars ? "cars" : "empty", "| scrape:", scrapeSettled.status, hasScrapeCars ? "cars" : "empty", "| chosen:", chosen);
+      console.log("[chat] search results:", (searchResults as { total?: number } | null)?.total ?? 0, "from", (searchResults as { source?: string } | null)?.source, "mode:", searchMode, "maxPrice", search.maxPrice, "doors:", search.doors);
 
       if (searchResults?.results?.length > 0) {
         const enriched = searchResults.results.map((c: Record<string, unknown>) =>
@@ -280,13 +334,13 @@ export async function POST(req: Request) {
       return "No he podido conectar temporalmente con el modelo de lenguaje, pero tus parámetros de búsqueda han sido registrados. Por favor, intenta de nuevo tu consulta.";
     };
 
-    // Attempt LLM stream with generous timeout (60s) + graceful fallback
+    // Attempt LLM stream with generous timeout (95s: agent + scrape + vision) + graceful fallback
     let llmTimeout: ReturnType<typeof setTimeout> | null = null;
     const abortController = new AbortController();
     llmTimeout = setTimeout(() => {
-      console.warn("[chat] LLM timeout 60s — aborting stream for", conversationId);
+      console.warn("[chat] LLM timeout 95s — aborting stream for", conversationId);
       try { abortController.abort(); } catch {}
-    }, 60000);
+    }, 95000);
 
     // Helper to persist assistant message to DB
     const persistAssistantMessage = async (text: string) => {

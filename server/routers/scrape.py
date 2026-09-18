@@ -1,6 +1,7 @@
 from fastapi import APIRouter, HTTPException
 from models.schemas import ScrapeRequest, ScrapeResponse, CarResult
 import httpx
+import os
 from bs4 import BeautifulSoup, SoupStrainer
 import re
 import logging
@@ -9,6 +10,125 @@ from urllib.parse import quote
 import json
 logger = logging.getLogger("scrape")
 router = APIRouter(prefix="/scrape", tags=["scraping"])
+
+BROWSER_SERVICE_URL = os.getenv("BROWSER_SERVICE_URL", "http://automisho-browser:3000")
+
+
+def _map_sources_for_browser(source: str) -> list[str]:
+    """Map a ScrapeRequest source to browser worker source names."""
+    if source in ("auto", "deep"):
+        return ["coches_net", "autoscout24", "wallapop", "milanuncios"]
+    if source in ("fast", "standard"):
+        return ["coches_net", "autoscout24"]
+    # Single simple source (e.g. "autoscout24") -> [that one]
+    return [source]
+
+
+async def _scrape_via_browser_worker(req: ScrapeRequest) -> list[CarResult] | None:
+    """Delegate search to the real Playwright browser worker.
+
+    Returns a list of CarResult on success, None on any failure or
+    empty result so the caller falls back to the httpx flow.
+    Never raises, never fabricates listings.
+
+    NOTE: NL query cleaning lives in ONE place — the worker
+    (`_clean_query_for_portal` in server/browser_worker/main.py). This
+    function sends the raw query + min/max price and lets the worker
+    build per-portal URLs.
+    """
+    sources = _map_sources_for_browser(req.source)
+    try:
+        async with httpx.AsyncClient(timeout=25.0) as client:
+            resp = await client.post(
+                f"{BROWSER_SERVICE_URL}/scrape/search",
+                json={
+                    "query": req.query,
+                    "max_price": req.max_price,
+                    "min_price": req.min_price,
+                    "sources": sources,
+                },
+            )
+    except Exception as e:
+        logger.warning(f"[scrape] browser worker unreachable: {type(e).__name__}: {e}")
+        return None
+    if resp.status_code != 200:
+        logger.warning(f"[scrape] browser worker status {resp.status_code}")
+        return None
+    try:
+        items = resp.json()
+    except Exception as e:
+        logger.warning(f"[scrape] browser worker invalid JSON: {e}")
+        return None
+    if not items:
+        logger.warning("[scrape] browser worker returned empty list")
+        return None
+    results: list[CarResult] = []
+    for item in items:
+        try:
+            results.append(CarResult(
+                title=item.get("title", ""),
+                price=item.get("price"),
+                year=item.get("year"),
+                km=item.get("km"),
+                fuel=item.get("fuel"),
+                url=item.get("url"),
+                image_url=item.get("image_url"),
+                source=item.get("source") or "browser",
+            ))
+        except Exception as e:
+            logger.warning(f"[scrape] skipping malformed browser item: {e}")
+            continue
+    if not results:
+        logger.warning("[scrape] browser worker items could not be converted")
+        return None
+    return results
+
+
+def _apply_post_filters(flat: list[CarResult], req: ScrapeRequest) -> list[CarResult]:
+    """Apply the standard post-filters: price bounds, doors, skeleton
+    discard, dedup, fair round-robin across sources, slice to max_results."""
+    # Strict price bounds filter (eliminates sponsored ads that ignore query params)
+    if req.max_price:
+        flat = [c for c in flat if (c.price and c.price <= req.max_price * 1.05)]
+    if req.min_price:
+        flat = [c for c in flat if (c.price and c.price >= req.min_price * 0.95)]
+
+    # Strict door count filter if requested
+    if req.doors == 3:
+        flat = [c for c in flat if is_strictly_3_door(c.title, c.url or "")]
+    elif req.doors in (4, 5):
+        flat = [c for c in flat if is_strictly_4_or_5_door(c.title, c.url or "")]
+
+    # Discard incomplete or unpriced skeleton cards
+    flat = [
+        c for c in flat
+        if c.title and c.title.strip() not in ("Sin título", "Vehículo sin título", "Vehículo en Wallapop", "Sin titulo")
+        and c.price and c.price > 0
+    ]
+
+    # Deduplicate by url/title
+    seen: set[str] = set()
+    deduped: list[CarResult] = []
+    for c in flat:
+        key = c.url or c.title
+        if key and key not in seen:
+            seen.add(key)
+            deduped.append(c)
+
+    # Fair round-robin aggregation across sources
+    by_source: dict[str, list[CarResult]] = {}
+    for c in deduped:
+        src = c.source or "other"
+        by_source.setdefault(src, []).append(c)
+
+    balanced: list[CarResult] = []
+    max_len = max((len(lst) for lst in by_source.values()), default=0)
+    for i in range(max_len):
+        for src_list in by_source.values():
+            if i < len(src_list):
+                balanced.append(src_list[i])
+
+    return balanced[: req.max_results]
 
 def is_valid_car_image(url: str | None) -> bool:
     """Filter out non-car images: dealer logos, banners, placeholders, SVGs, dealer watermarks."""
@@ -182,6 +302,23 @@ async def scrape_cars(req: ScrapeRequest):
         if m_doors:
             req.doors = int(m_doors.group(1))
             logger.info(f"[scrape] Auto-detected doors requirement: {req.doors} from query '{req.query}'")
+
+    # Prefer the real Playwright browser worker; fall back to httpx below.
+    browser_results = await _scrape_via_browser_worker(req)
+    if browser_results:
+        sliced = _apply_post_filters(browser_results, req)
+        if sliced:
+            logger.info(f"[scrape] browser worker aggregated {len(sliced)}/{len(browser_results)}")
+            return ScrapeResponse(
+                results=sliced,
+                source="browser",
+                query=req.query,
+                total=len(sliced),
+            )
+        logger.warning(
+            f"[scrape] browser worker results filtered to zero "
+            f"({len(browser_results)} before filters); falling back to httpx flow."
+        )
 
     if req.source in ("auto", "deep"):
         tasks = [

@@ -69,3 +69,42 @@ async def test_model_gateway_tier_routing():
     assert gw.resolve_model(ModelTier.TIER_1_FAST) == "deepseek/deepseek-v4-flash"
     assert gw.resolve_model(ModelTier.TIER_2_AGENTIC) == "meta/muse-spark-1.3-contributor"
     assert gw.resolve_model(ModelTier.TIER_VISION) == "deepseek/deepseek-v4.1-flash"
+
+@pytest.mark.asyncio
+async def test_model_gateway_nested_usage_details(monkeypatch):
+    gw = ModelGateway(base_url="https://api.commandcode.ai/provider/v1", api_key="test_key")
+
+    mock_resp = {
+        "id": "cmpl-nested",
+        "choices": [
+            {
+                "message": {
+                    "role": "assistant",
+                    "content": "ok",
+                    "tool_calls": None,
+                }
+            }
+        ],
+        "usage": {
+            "prompt_tokens": 120,
+            "completion_tokens": 30,
+            "total_tokens": 150,
+            "prompt_tokens_details": {"cached_tokens": 40, "audio_tokens": 0},
+            "completion_tokens_details": {"reasoning_tokens": 12, "image_tokens": 0},
+        },
+    }
+
+    async def mock_post(*args, **kwargs):
+        req = httpx.Request("POST", "https://api.commandcode.ai/provider/v1/chat/completions")
+        return httpx.Response(200, json=mock_resp, request=req)
+
+    monkeypatch.setattr(httpx.AsyncClient, "post", mock_post)
+
+    response = await gw.chat_completion(
+        messages=[{"role": "user", "content": "ping"}],
+        tier=ModelTier.TIER_2_AGENTIC,
+    )
+
+    assert response.content == "ok"
+    assert response.usage["prompt_tokens_details"]["cached_tokens"] == 40
+    assert response.usage["completion_tokens_details"]["reasoning_tokens"] == 12

@@ -7,6 +7,7 @@ import asyncio
 import logging
 import os
 import re
+import unicodedata
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("automisho.browser_worker")
@@ -35,31 +36,139 @@ _pool_semaphore = asyncio.Semaphore(CONCURRENCY_LIMIT)
 _playwright = None
 _browser = None
 
-SOURCE_URLS = {
-    "coches_net": "https://www.coches.net/coches-de-ocasion/?q={query}",
-    "autoscout24": "https://www.autoscout24.es/lst?sort=standard&desc=0&ustate=new%2Cused&q={query}",
-    "wallapop": "https://es.wallapop.com/app/search?keywords={query}&filters_source=search_box",
+# Noise words stripped from natural-language queries before hitting portals.
+# Portals do not understand NL ("hola dame los 5 mejores...") and return 0
+# results or block, so we keep only brand/model tokens or meaningful words.
+_PORTAL_NOISE = {
+    "hola", "dame", "dime", "busco", "busca", "quiero", "necesito",
+    "mejores", "mejor", "buenos", "bueno", "buenas", "baratos", "barato",
+    "coches", "coche", "opciones", "opcion", "cinco", "tres", "cuatro",
+    "puertas", "puerta", "grises", "gris", "negros", "negro",
+    "blancos", "blanco", "rojos", "rojo", "azules", "azul",
+    "menos", "mas", "que", "euros", "euro", "gasolina", "diesel",
+    "segunda", "mano", "hay", "para", "con", "sin", "hasta", "sobre",
+    "entre", "por", "de", "del", "un", "una", "el", "la", "los", "las",
+    "y", "a", "al", "en", "mi", "mis", "solo", "ver", "pero", "ojo",
+    "porfa", "favor", "candidatos", "smejores",
 }
+
+_KNOWN_MAKES_MODELS = {
+    "seat", "volkswagen", "vw", "renault", "peugeot", "toyota", "bmw",
+    "mercedes", "ford", "opel", "nissan", "hyundai", "kia", "audi",
+    "skoda", "fiat", "citroen", "dacia", "mazda", "honda", "volvo",
+    "leon", "ibiza", "golf", "clio", "corolla", "focus", "corsa",
+    "fiesta", "c3", "208", "astra", "megane",
+}
+
+
+def _strip_accents(text: str) -> str:
+    return "".join(
+        c for c in unicodedata.normalize("NFD", text)
+        if unicodedata.category(c) != "Mn"
+    )
+
+
+def _clean_query_for_portal(query: str) -> str:
+    """Reduce a natural-language query to portal-searchable keywords.
+
+    Lowercases, strips accents and NL noise words, keeps brand/model tokens
+    or words with >= 3 letters (max 4 tokens). Returns "" for generic
+    price-only searches so callers skip the keyword param entirely.
+    """
+    if not query:
+        return ""
+    words = re.sub(r"[^\w\s]", " ", _strip_accents(query.lower())).split()
+    meaningful = [w for w in words if w not in _PORTAL_NOISE and len(w) >= 3]
+    brands = [w for w in meaningful if w in _KNOWN_MAKES_MODELS]
+    kept = brands if brands else meaningful
+    return " ".join(kept[:4])
+
+
+def _build_portal_url(
+    source: str, keywords: str, max_price: Optional[int]
+) -> Optional[str]:
+    """Build a portal search URL with real price filters.
+
+    `keywords` is already cleaned; empty keywords means generic price-only
+    search (no keyword param, avoids filtering everything to 0).
+    Returns None for unknown sources.
+    """
+    q = quote_plus(keywords) if keywords else ""
+    if source == "autoscout24":
+        url = "https://www.autoscout24.es/lst?sort=standard&desc=0&ustate=new%2Cused"
+        if q:
+            url += f"&q={q}"
+        if max_price is not None:
+            url += f"&priceto={max_price}"
+        return url
+    if source == "coches_net":
+        url = "https://www.coches.net/coches-de-ocasion/"
+        params = []
+        if q:
+            params.append(f"Keywords={q}")
+        if max_price is not None:
+            params.append(f"MaxPrice={max_price}")
+        if params:
+            url += "?" + "&".join(params)
+        return url
+    if source == "wallapop":
+        url = "https://es.wallapop.com/app/search?filters_source=search_box"
+        if q:
+            url += f"&keywords={q}"
+        if max_price is not None:
+            url += f"&max_price={max_price}"
+        return url
+    if source == "milanuncios":
+        # Milanuncios motor search; in-memory max_price filter already applies.
+        base = "https://www.milanuncios.com/coches-de-segunda-mano/"
+        params = ["demanda=n"]
+        if q:
+            params.append(f"s={q}")
+        if max_price is not None:
+            params.append(f"precio-hasta={max_price}")
+        return base + "?" + "&".join(params)
+    return None
 
 EXTRACT_LISTINGS_JS = """() => {
   const out = [];
   const seen = new Set();
-  const anchors = document.querySelectorAll('a[href]');
-  for (const a of anchors) {
-    let href = '';
-    try { href = new URL(a.getAttribute('href'), document.baseURI).href; }
-    catch (e) { continue; }
-    if (!href.startsWith('http') || seen.has(href)) continue;
-    const text = (a.innerText || '').replace(/\\s+/g, ' ').trim();
-    if (text.length < 12 || text.indexOf('€') === -1) continue;
-    const img = a.querySelector('img');
-    out.push({
-      title: text.slice(0, 160),
-      url: href,
-      image_url: img ? (img.currentSrc || img.src || null) : null,
-    });
-    seen.add(href);
+  const cards = document.querySelectorAll(
+    '[data-testid*=result],[class*=result],[class*=card],[class*=Card],[class*=item],[class*=Item],article,li'
+  );
+  const priceRe = /(\\d[\\d\\s\\.\\,]*\\s*€|€\\s*\\d[\\d\\s\\.\\,]*)/;
+  for (const card of cards) {
     if (out.length >= 40) break;
+    const links = card.querySelectorAll('a[href]');
+    if (!links.length) continue;
+    let best = null;
+    let bestLen = 0;
+    for (const a of links) {
+      let href = '';
+      try { href = new URL(a.getAttribute('href'), document.baseURI).href; }
+      catch (e) { continue; }
+      if (!href.startsWith('http') || seen.has(href)) continue;
+      if (href.length > bestLen) { best = href; bestLen = href.length; }
+    }
+    if (!best) continue;
+    const cardText = (card.innerText || '').replace(/\\s+/g, ' ').trim();
+    if (cardText.length < 12) continue;
+    const titleEl = card.querySelector('h2,h3,h1,p');
+    const titleText = titleEl ? (titleEl.innerText || '').replace(/\\s+/g, ' ').trim() : '';
+    const title = (titleText.length >= 8 ? titleText : cardText).slice(0, 160);
+    const priceMatch = cardText.match(priceRe);
+    const price = priceMatch ? priceMatch[0].slice(0, 32) : null;
+    let imageUrl = null;
+    const imgs = card.querySelectorAll('img');
+    for (const img of imgs) {
+      const src = img.currentSrc || img.src || '';
+      if (!src.startsWith('http')) continue;
+      const low = src.toLowerCase();
+      if (low.includes('logo') || low.includes('icon') || low.endsWith('.svg')) continue;
+      imageUrl = src;
+      break;
+    }
+    out.push({ title: title, url: best, image_url: imageUrl, price: price });
+    seen.add(best);
   }
   return out;
 }"""
@@ -106,6 +215,35 @@ def _parse_price(text: Optional[str]) -> Optional[int]:
         return int(float(raw))
     except ValueError:
         return None
+
+
+def _resolve_entry_price(entry: dict) -> Optional[int]:
+    """Prefer a portal-provided direct price; fall back to title parsing.
+
+    Accepts the price field as int/float or as a raw string (e.g. "2.500 €")
+    and returns None when nothing parseable is found.
+    """
+    direct = entry.get("price")
+    if isinstance(direct, bool):
+        pass
+    elif isinstance(direct, (int, float)):
+        return int(direct)
+    elif isinstance(direct, str) and direct.strip():
+        parsed = _parse_price(direct)
+        if parsed is not None:
+            return parsed
+    return _parse_price(entry.get("title", ""))
+
+
+def _price_in_bounds(
+    price: int, max_price: Optional[int], min_price: Optional[int] = None
+) -> bool:
+    """Check a resolved price against optional min/max bounds."""
+    if max_price is not None and price > max_price:
+        return False
+    if min_price is not None and price < min_price:
+        return False
+    return True
 
 
 @asynccontextmanager
@@ -155,6 +293,7 @@ app = FastAPI(
 class SearchRequest(BaseModel):
     query: str
     max_price: Optional[int] = None
+    min_price: Optional[int] = None
     sources: Optional[List[str]] = ["coches_net", "autoscout24", "wallapop"]
 
 
@@ -206,14 +345,44 @@ async def _new_page():
     return context, page
 
 
-async def _scrape_source(source: str, query: str, max_price: Optional[int]) -> List[CarItem]:
+COOKIE_BANNER_SELECTORS = [
+    "button:has-text('Aceptar')",
+    "button:has-text('Acepto')",
+    "button:has-text('Accept')",
+    "button:has-text('Aceptar todas')",
+    "#onetrust-accept-btn-handler",
+    "#onetrust-reject-all-handler",
+    "[id*='onetrust'] button",
+    "button[id*='cookie' i]",
+    "[class*='cookie' i] button",
+]
+
+
+async def _dismiss_cookie_banner(page) -> None:
+    """Best-effort cookie banner dismissal; never raises."""
+    for selector in COOKIE_BANNER_SELECTORS:
+        try:
+            await page.click(selector, timeout=1200)
+            logger.info("[BrowserWorker] Cookie banner dismissed via '%s'.", selector)
+            return
+        except Exception:
+            continue
+
+
+async def _scrape_source(
+    source: str,
+    query: str,
+    max_price: Optional[int],
+    min_price: Optional[int] = None,
+) -> List[CarItem]:
     """Scrapes one portal. Returns real listings only; empty list on any failure."""
     if not _pool_active():
         logger.warning("[BrowserWorker] Chromium pool unavailable; skipping source '%s'.", source)
         return []
-    template = SOURCE_URLS.get(source)
-    if not template:
-        logger.warning("[BrowserWorker] Unknown source '%s'.", source)
+    keywords = _clean_query_for_portal(query)
+    url = _build_portal_url(source, keywords, max_price)
+    if not url:
+        logger.warning("[BrowserWorker] Unknown source '%s'; skipping.", source)
         return []
 
     async with _pool_semaphore:
@@ -221,15 +390,22 @@ async def _scrape_source(source: str, query: str, max_price: Optional[int]) -> L
         try:
             context, page = await _new_page()
             try:
-                await page.goto(
-                    template.format(query=quote_plus(query)),
-                    wait_until="domcontentloaded",
-                    timeout=NAV_TIMEOUT_MS,
-                )
-                await page.wait_for_timeout(1500)
+                try:
+                    await page.goto(url, wait_until="networkidle", timeout=NAV_TIMEOUT_MS)
+                except Exception:
+                    await page.goto(url, wait_until="domcontentloaded", timeout=NAV_TIMEOUT_MS)
+                await page.wait_for_timeout(2500)
             except Exception as nav_err:
                 logger.warning(f"[BrowserWorker] Navigation failed for '{source}': {nav_err}")
                 return []
+
+            await _dismiss_cookie_banner(page)
+            try:
+                for _ in range(3):
+                    await page.keyboard.press("PageDown")
+                    await page.wait_for_timeout(600)
+            except Exception as scroll_err:
+                logger.warning(f"[BrowserWorker] Scroll failed for '{source}': {scroll_err}")
 
             try:
                 raw_entries = await page.evaluate(EXTRACT_LISTINGS_JS)
@@ -238,11 +414,13 @@ async def _scrape_source(source: str, query: str, max_price: Optional[int]) -> L
                 return []
 
             items: List[CarItem] = []
+            raw_count = len(raw_entries or [])
             for entry in raw_entries or []:
-                price = _parse_price(entry.get("title", ""))
+                # Prefer the portal-provided price; fall back to title parsing.
+                price = _resolve_entry_price(entry)
                 if price is None:
                     continue
-                if max_price is not None and price > max_price:
+                if not _price_in_bounds(price, max_price, min_price):
                     continue
                 image_url = entry.get("image_url")
                 items.append(
@@ -256,7 +434,9 @@ async def _scrape_source(source: str, query: str, max_price: Optional[int]) -> L
                 )
                 if len(items) >= MAX_RESULTS_PER_SOURCE:
                     break
-            logger.info(f"[BrowserWorker] Source '{source}' returned {len(items)} real listings.")
+            logger.info(
+                f"[BrowserWorker] Source '{source}' raw_entries={raw_count} converted={len(items)}."
+            )
             return items
         except Exception as exc:
             logger.warning(f"[BrowserWorker] Scrape failed for '{source}': {exc}")
@@ -289,12 +469,12 @@ async def search_portal(req: SearchRequest):
     Executes in an isolated container with a bounded Chromium pool.
     Never returns fabricated listings: failures yield an empty list.
     """
-    logger.info(f"[BrowserWorker] Searching query='{req.query}' max_price={req.max_price}")
+    logger.info(f"[BrowserWorker] Searching query='{req.query}' max_price={req.max_price} min_price={req.min_price}")
     sources = req.sources or []
     if not sources:
         return []
     per_source = await asyncio.gather(
-        *[_scrape_source(source, req.query, req.max_price) for source in sources]
+        *[_scrape_source(source, req.query, req.max_price, req.min_price) for source in sources]
     )
     results: List[CarItem] = [item for group in per_source for item in group]
     return results

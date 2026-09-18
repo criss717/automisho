@@ -54,7 +54,7 @@ class AgentResponse(BaseModel):
     content: str
     model_used: str
     tool_calls: Optional[List[Dict[str, Any]]] = None
-    usage: Optional[Dict[str, int]] = None
+    usage: Optional[Dict[str, Any]] = None
 
 class ModelGateway:
     def __init__(

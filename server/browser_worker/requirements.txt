@@ -2,5 +2,5 @@ fastapi
 uvicorn
 pydantic
 httpx
-playwright
-playwright-stealth
+playwright==1.48.0
+playwright-stealth==1.0.6

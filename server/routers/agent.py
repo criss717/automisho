@@ -37,20 +37,11 @@ async def tool_search_cars(query: str, max_price: Optional[int] = None, sources:
             if resp.status_code == 200:
                 return resp.json()
     except Exception as e:
-        logger.warning(f"[Tool:search_cars] Browser worker unavailable or failed: {e}. Falling back to standard catalog.")
-    
-    # Fallback response if browser worker is initializing
-    return [
-        {
-            "title": f"{query.title()} 1.9 TDI",
-            "price": max_price or 2900,
-            "year": 2007,
-            "km": 185000,
-            "source": "coches_net",
-            "url": f"https://www.coches.net/segunda-mano/?q={query.replace(' ', '+')}",
-            "image_url": "https://images.coches.net/sample.jpg"
-        }
-    ]
+        logger.warning(f"[Tool:search_cars] Browser worker unavailable or failed: {e}. Returning empty list.")
+        return []
+
+    logger.warning("[Tool:search_cars] Browser worker returned non-200 or empty payload. Returning empty list.")
+    return []
 
 async def tool_inspect_listing(url: str) -> Dict[str, Any]:
     """Inspects a specific listing using isolated Chromium."""
