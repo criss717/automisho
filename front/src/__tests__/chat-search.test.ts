@@ -14,7 +14,7 @@ jest.mock("@/lib/prisma", () => ({
     message: { create: jest.fn(), count: jest.fn() },
   },
 }));
-jest.mock("@/lib/ai", () => ({ opencode: jest.fn(), CHAT_MODEL: "qwen3.7-plus", AUTOMISHO_SYSTEM_PROMPT: "test" }));
+jest.mock("@/lib/ai", () => ({ getCommandCodeModel: jest.fn(), CHAT_MODEL: "meta/muse-spark-1.3-contributor", AUTOMISHO_SYSTEM_PROMPT: "test" }));
 
 import {
   detectCarSearch,

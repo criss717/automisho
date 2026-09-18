@@ -61,18 +61,20 @@ class ModelGateway:
         self,
         base_url: Optional[str] = None,
         api_key: Optional[str] = None,
-        default_model: str = "meta/muse-spark-1.3"
+        default_model: Optional[str] = None,
     ):
         self.base_url = (base_url or os.getenv("COMMANDCODE_BASE_URL", "https://api.commandcode.ai/provider/v1")).rstrip("/")
         self.api_key = api_key or os.getenv("COMMANDCODE_API_KEY", "")
-        self.default_model = default_model
+        self.default_model = default_model or os.getenv(
+            "DEFAULT_AGENT_MODEL", "meta/muse-spark-1.3-contributor"
+        )
         self.circuit_breaker = CircuitBreaker()
 
     def resolve_model(self, tier: ModelTier) -> str:
         if tier == ModelTier.TIER_1_FAST:
             return "deepseek/deepseek-v4-flash"
         elif tier == ModelTier.TIER_VISION:
-            return "google/gemini-2.5-pro"
+            return os.getenv("VISION_MODEL", "deepseek/deepseek-v4.1-flash")
         return self.default_model
 
     async def chat_completion(

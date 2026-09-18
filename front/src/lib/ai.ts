@@ -1,20 +1,11 @@
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
-import { createAnthropic } from "@ai-sdk/anthropic";
-import { createGoogleGenerativeAI } from "@ai-sdk/google";
 
-export const CHAT_MODEL = process.env.DEFAULT_AGENT_MODEL || process.env.COMMANDCODE_MODEL || "meta/muse-spark-1.3";
-export const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-2.5-flash";
+export const CHAT_MODEL =
+  process.env.DEFAULT_AGENT_MODEL || process.env.COMMANDCODE_MODEL || "meta/muse-spark-1.3-contributor";
+export const VISION_MODEL = process.env.VISION_MODEL || "deepseek/deepseek-v4.1-flash";
 
 export function isCommandCodeConfigured(): boolean {
   return Boolean(process.env.COMMANDCODE_API_KEY);
-}
-
-export function isOpenCodeConfigured(): boolean {
-  return Boolean(process.env.OPENCODE_API_KEY && process.env.OPENCODE_BASE_URL);
-}
-
-export function isGeminiConfigured(): boolean {
-  return Boolean(process.env.GEMINI_API_KEY);
 }
 
 export function getCommandCodeModel(modelId: string = CHAT_MODEL) {
@@ -28,62 +19,11 @@ export function getCommandCodeModel(modelId: string = CHAT_MODEL) {
   return ccProvider(modelId);
 }
 
-// OpenCode Go tiene dos familias de endpoints según el modelo:
-// - /chat/completions (OpenAI compatible) -> kimi, deepseek, glm, grok...
-// - /messages (Anthropic) -> qwen, minimax...
-// Docs: https://opencode.ai/docs/es/go#endpoints
-const ANTHROPIC_MODELS = ["qwen", "minimax"];
-
-export function getOpenCodeModel(modelId: string = CHAT_MODEL) {
-  const baseURL = process.env.OPENCODE_BASE_URL || "https://opencode.ai/zen/go/v1";
-  const apiKey = process.env.OPENCODE_API_KEY || "";
-  const lower = modelId.toLowerCase();
-  const isAnthropic = ANTHROPIC_MODELS.some((p) => lower.includes(p));
-
-  if (isAnthropic) {
-    const opencodeAnthropic = createAnthropic({
-      baseURL,
-      apiKey,
-    } as unknown as Record<string, unknown>);
-    return opencodeAnthropic(modelId);
-  }
-
-  const opencode = createOpenAICompatible({
-    name: "opencode-go",
-    baseURL,
-    apiKey,
-  });
-  return opencode(modelId);
-}
-
-export function getGeminiModel(modelId: string = GEMINI_MODEL) {
-  const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey) {
-    throw new Error("GEMINI_API_KEY is not configured in .env.local");
-  }
-  const google = createGoogleGenerativeAI({
-    apiKey,
-  });
-  return google(modelId);
-}
-
 /**
- * Obtiene el modelo activo según configuración:
- * 1. Command Code Provider API (Muse Spark 1.3 u otro) si está configurado
- * 2. OpenCode Go si está configurado
- * 3. Google Gemini como fallback
+ * Returns the active model, GOAT-only:
+ * Single Command Code Provider client (OpenAI-compatible).
  */
 export function getChatModel(modelId: string = CHAT_MODEL) {
-  if (isCommandCodeConfigured()) {
-    return getCommandCodeModel(modelId);
-  }
-  if (isOpenCodeConfigured()) {
-    return getOpenCodeModel(modelId);
-  }
-  if (isGeminiConfigured()) {
-    return getGeminiModel(GEMINI_MODEL);
-  }
-  // Fallback a Command Code con defaults
   return getCommandCodeModel(modelId);
 }
 

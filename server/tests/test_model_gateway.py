@@ -7,7 +7,7 @@ async def test_model_gateway_initialization():
     gw = ModelGateway(base_url="https://api.commandcode.ai/provider/v1", api_key="test_key")
     assert gw.base_url == "https://api.commandcode.ai/provider/v1"
     assert gw.api_key == "test_key"
-    assert gw.default_model == "meta/muse-spark-1.3"
+    assert gw.default_model == "meta/muse-spark-1.3-contributor"
 
 @pytest.mark.asyncio
 async def test_model_gateway_completion_success(monkeypatch):
@@ -39,7 +39,7 @@ async def test_model_gateway_completion_success(monkeypatch):
     )
 
     assert response.content == "Revisé el SEAT Ibiza y el precio es coherente."
-    assert response.model_used == "meta/muse-spark-1.3"
+    assert response.model_used == "meta/muse-spark-1.3-contributor"
     assert response.tool_calls is None
 
 @pytest.mark.asyncio
@@ -67,5 +67,5 @@ async def test_model_gateway_circuit_breaker(monkeypatch):
 async def test_model_gateway_tier_routing():
     gw = ModelGateway(base_url="https://api.commandcode.ai/provider/v1", api_key="test_key")
     assert gw.resolve_model(ModelTier.TIER_1_FAST) == "deepseek/deepseek-v4-flash"
-    assert gw.resolve_model(ModelTier.TIER_2_AGENTIC) == "meta/muse-spark-1.3"
-    assert gw.resolve_model(ModelTier.TIER_VISION) == "google/gemini-2.5-pro"
+    assert gw.resolve_model(ModelTier.TIER_2_AGENTIC) == "meta/muse-spark-1.3-contributor"
+    assert gw.resolve_model(ModelTier.TIER_VISION) == "deepseek/deepseek-v4.1-flash"

@@ -1,12 +1,5 @@
 import { generateText } from "ai";
-import {
-  getGeminiModel,
-  getOpenCodeModel,
-  isGeminiConfigured,
-  isOpenCodeConfigured,
-  GEMINI_MODEL,
-  CHAT_MODEL,
-} from "@/lib/ai";
+import { getCommandCodeModel, isCommandCodeConfigured, VISION_MODEL } from "@/lib/ai";
 import type { CarResult, VisualAudit } from "@/types";
 
 export interface VisionAuditOptions {
@@ -16,7 +9,7 @@ export interface VisionAuditOptions {
 }
 
 /**
- * Audits a single car image using Vision AI (OpenCode Go primary, Google Gemini fallback).
+ * Audits a single car image using Vision AI (Command Code GOAT provider).
  * Evaluates doors, color, body style, condition, flip/resale potential, and user query match.
  */
 export async function auditSingleCarImage(
@@ -86,35 +79,12 @@ Responde ÚNICAMENTE un JSON válido con este formato:
 
     let responseText = "";
 
-    // 2. Try OpenCode Go Vision first (if configured)
-    if (isOpenCodeConfigured()) {
+    // 2. GOAT-only vision call via Command Code Provider (vision-capable model).
+    if (isCommandCodeConfigured()) {
       try {
-        const openCodeModel = getOpenCodeModel(CHAT_MODEL);
+        const visionModel = getCommandCodeModel(VISION_MODEL);
         const result = await generateText({
-          model: openCodeModel,
-          messages: [
-            {
-              role: "user",
-              content: [
-                { type: "text", text: prompt },
-                { type: "file", data: buffer, mediaType: contentType },
-              ],
-            },
-          ],
-          abortSignal: AbortSignal.timeout(3500),
-        });
-        responseText = result.text;
-      } catch (openCodeErr) {
-        console.warn("[vision] OpenCode Vision failed, falling back to Gemini:", (openCodeErr as Error).message);
-      }
-    }
-
-    // 3. Fallback to Google Gemini Vision (multimodal nativo)
-    if (!responseText && isGeminiConfigured()) {
-      try {
-        const geminiModel = getGeminiModel(GEMINI_MODEL);
-        const result = await generateText({
-          model: geminiModel,
+          model: visionModel,
           messages: [
             {
               role: "user",
@@ -127,8 +97,8 @@ Responde ÚNICAMENTE un JSON válido con este formato:
           abortSignal: AbortSignal.timeout(4000),
         });
         responseText = result.text;
-      } catch (geminiErr) {
-        console.warn("[vision] Gemini Vision error:", (geminiErr as Error).message);
+      } catch (visionErr) {
+        console.warn("[vision] CommandCode Vision error:", (visionErr as Error).message);
       }
     }
 
