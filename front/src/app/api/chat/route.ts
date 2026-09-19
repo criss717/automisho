@@ -24,7 +24,7 @@ import { lookupVehicleDgt } from "@/lib/dgt-client";
 
 async function searchBackend(query: string, maxPrice?: number, minPrice?: number, searchMode: string = "standard", doors?: number) {
   const controller = new AbortController();
-  const timeoutMs = searchMode === "deep" ? 40000 : 25000;
+  const timeoutMs = searchMode === "deep" ? 85000 : 70000;
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
   try {
     const backendSource = searchMode === "deep" ? "deep" : "standard";
@@ -55,7 +55,7 @@ async function searchBackend(query: string, maxPrice?: number, minPrice?: number
 
 async function agentSearchBackend(userText: string) {
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 45000);
+  const timeout = setTimeout(() => controller.abort(), 75000);
   try {
     const res = await fetch(`${BACKEND_URL}/agent/chat`, {
       method: "POST",

@@ -25,14 +25,26 @@ sentinel = SentinelToolGateway(secret_key=SENTINEL_SECRET)
 
 # --- 1. Define Tool Handlers ---
 
-async def tool_search_cars(query: str, max_price: Optional[int] = None, sources: Optional[List[str]] = None) -> List[Dict[str, Any]]:
+async def tool_search_cars(
+    query: str,
+    max_price: Optional[int] = None,
+    min_price: Optional[int] = None,
+    doors: Optional[int] = None,
+    sources: Optional[List[str]] = None,
+) -> List[Dict[str, Any]]:
     """Calls the isolated browser worker to scrape cars using Playwright/Chromium."""
-    logger.info(f"[Tool:search_cars] Executing via Browser Worker at {BROWSER_SERVICE_URL}")
+    logger.info(f"[Tool:search_cars] Executing via Browser Worker at {BROWSER_SERVICE_URL} query='{query}' max_price={max_price} doors={doors}")
     try:
-        async with httpx.AsyncClient(timeout=15.0) as client:
+        async with httpx.AsyncClient(timeout=60.0) as client:
             resp = await client.post(
                 f"{BROWSER_SERVICE_URL}/scrape/search",
-                json={"query": query, "max_price": max_price, "sources": sources or ["coches_net", "autoscout24", "wallapop"]}
+                json={
+                    "query": query,
+                    "max_price": max_price,
+                    "min_price": min_price,
+                    "doors": doors,
+                    "sources": sources or ["coches_net", "autoscout24", "wallapop", "milanuncios"],
+                }
             )
             if resp.status_code == 200:
                 return resp.json()
@@ -47,7 +59,7 @@ async def tool_inspect_listing(url: str) -> Dict[str, Any]:
     """Inspects a specific listing using isolated Chromium."""
     logger.info(f"[Tool:inspect_listing] Inspecting URL via Browser Worker: {url}")
     try:
-        async with httpx.AsyncClient(timeout=15.0) as client:
+        async with httpx.AsyncClient(timeout=30.0) as client:
             resp = await client.post(
                 f"{BROWSER_SERVICE_URL}/scrape/inspect",
                 json={"url": url}
@@ -90,12 +102,14 @@ AGENT_TOOLS = [
         "type": "function",
         "function": {
             "name": "search_cars",
-            "description": "Busca vehículos de segunda mano en el mercado español (Coches.net, AutoScout24, Wallapop) usando el navegador Chromium.",
+            "description": "Busca vehículos de segunda mano en el mercado español (Coches.net, AutoScout24, Wallapop, Milanuncios) usando el navegador Chromium.",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "query": {"type": "string", "description": "Marca y modelo o términos de búsqueda, ej: 'seat ibiza'"},
-                    "max_price": {"type": "integer", "description": "Precio máximo en euros, ej: 3000"}
+                    "query": {"type": "string", "description": "Marca y modelo o términos de búsqueda, ej: 'seat ibiza' o 'coche compacto'"},
+                    "max_price": {"type": "integer", "description": "Precio máximo en euros, ej: 3500"},
+                    "min_price": {"type": "integer", "description": "Precio mínimo en euros"},
+                    "doors": {"type": "integer", "description": "Número exacto de puertas (ej: 3 o 5)"}
                 },
                 "required": ["query"]
             }

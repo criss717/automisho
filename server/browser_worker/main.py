@@ -29,7 +29,7 @@ except ImportError:
     STEALTH_AVAILABLE = False
 
 CONCURRENCY_LIMIT = int(os.getenv("BROWSER_CONCURRENCY", "5"))
-NAV_TIMEOUT_MS = int(os.getenv("BROWSER_NAV_TIMEOUT_MS", "20000"))
+NAV_TIMEOUT_MS = int(os.getenv("BROWSER_NAV_TIMEOUT_MS", "30000"))
 MAX_RESULTS_PER_SOURCE = int(os.getenv("BROWSER_MAX_RESULTS", "15"))
 
 _pool_semaphore = asyncio.Semaphore(CONCURRENCY_LIMIT)
@@ -85,9 +85,13 @@ def _clean_query_for_portal(query: str) -> str:
 
 
 def _build_portal_url(
-    source: str, keywords: str, max_price: Optional[int]
+    source: str,
+    keywords: str,
+    max_price: Optional[int],
+    min_price: Optional[int] = None,
+    doors: Optional[int] = None,
 ) -> Optional[str]:
-    """Build a portal search URL with real price filters.
+    """Build a portal search URL with real price and filter parameters.
 
     `keywords` is already cleaned; empty keywords means generic price-only
     search (no keyword param, avoids filtering everything to 0).
@@ -95,19 +99,27 @@ def _build_portal_url(
     """
     q = quote_plus(keywords) if keywords else ""
     if source == "autoscout24":
-        url = "https://www.autoscout24.es/lst?sort=standard&desc=0&ustate=new%2Cused"
+        url = "https://www.autoscout24.es/lst?atype=C&cy=E&desc=0&sort=standard&ustate=new%2Cused"
         if q:
             url += f"&q={q}"
         if max_price is not None:
             url += f"&priceto={max_price}"
+        if min_price is not None:
+            url += f"&pricefrom={min_price}"
+        if doors is not None:
+            url += f"&doorfrom={doors}&doorto={doors}"
         return url
     if source == "coches_net":
-        url = "https://www.coches.net/coches-de-ocasion/"
+        url = "https://www.coches.net/segunda-mano/"
         params = []
         if q:
             params.append(f"Keywords={q}")
         if max_price is not None:
             params.append(f"MaxPrice={max_price}")
+        if min_price is not None:
+            params.append(f"MinPrice={min_price}")
+        if doors is not None:
+            params.append(f"DoorsList={doors}")
         if params:
             url += "?" + "&".join(params)
         return url
@@ -117,58 +129,135 @@ def _build_portal_url(
             url += f"&keywords={q}"
         if max_price is not None:
             url += f"&max_price={max_price}"
+        if min_price is not None:
+            url += f"&min_price={min_price}"
         return url
     if source == "milanuncios":
-        # Milanuncios motor search; in-memory max_price filter already applies.
         base = "https://www.milanuncios.com/coches-de-segunda-mano/"
         params = ["demanda=n"]
         if q:
             params.append(f"s={q}")
         if max_price is not None:
             params.append(f"precio-hasta={max_price}")
+        if min_price is not None:
+            params.append(f"precio-desde={min_price}")
+        if doors is not None:
+            params.append(f"puertas={doors}")
         return base + "?" + "&".join(params)
     return None
 
 EXTRACT_LISTINGS_JS = """() => {
   const out = [];
   const seen = new Set();
-  const cards = document.querySelectorAll(
-    '[data-testid*=result],[class*=result],[class*=card],[class*=Card],[class*=item],[class*=Item],article,li'
-  );
-  const priceRe = /(\\d[\\d\\s\\.\\,]*\\s*€|€\\s*\\d[\\d\\s\\.\\,]*)/;
-  for (const card of cards) {
-    if (out.length >= 40) break;
-    const links = card.querySelectorAll('a[href]');
-    if (!links.length) continue;
-    let best = null;
-    let bestLen = 0;
-    for (const a of links) {
-      let href = '';
-      try { href = new URL(a.getAttribute('href'), document.baseURI).href; }
-      catch (e) { continue; }
-      if (!href.startsWith('http') || seen.has(href)) continue;
-      if (href.length > bestLen) { best = href; bestLen = href.length; }
+
+  // 1. AutoScout24 specific extraction
+  const as24Articles = document.querySelectorAll('article.cldt-summary-full-item, article[data-testid="list-item"]');
+  for (const art of as24Articles) {
+    if (out.length >= 35) break;
+    const guid = art.getAttribute('data-guid') || art.id;
+    let link = guid ? `https://www.autoscout24.es/anuncios/-${guid}` : '';
+    const a = art.querySelector('a[href*="/anuncios/"]');
+    if (a && a.href) link = a.href;
+    if (!link || seen.has(link)) continue;
+
+    const titleEl = art.querySelector('span[class*="ListItemTitle"], span[class*="title" i], h2, h3');
+    const title = titleEl ? titleEl.innerText.replace(/\\s+/g, ' ').trim() : ((art.getAttribute('data-make') || 'Coche') + ' ' + (art.getAttribute('data-model') || ''));
+
+    let price = art.getAttribute('data-price');
+    if (!price) {
+      const pEl = art.querySelector('[data-testid="regular-price"]');
+      price = pEl ? pEl.innerText.trim() : null;
     }
-    if (!best) continue;
-    const cardText = (card.innerText || '').replace(/\\s+/g, ' ').trim();
-    if (cardText.length < 12) continue;
-    const titleEl = card.querySelector('h2,h3,h1,p');
-    const titleText = titleEl ? (titleEl.innerText || '').replace(/\\s+/g, ' ').trim() : '';
-    const title = (titleText.length >= 8 ? titleText : cardText).slice(0, 160);
-    const priceMatch = cardText.match(priceRe);
-    const price = priceMatch ? priceMatch[0].slice(0, 32) : null;
+
     let imageUrl = null;
-    const imgs = card.querySelectorAll('img');
-    for (const img of imgs) {
-      const src = img.currentSrc || img.src || '';
-      if (!src.startsWith('http')) continue;
-      const low = src.toLowerCase();
-      if (low.includes('logo') || low.includes('icon') || low.endsWith('.svg')) continue;
-      imageUrl = src;
-      break;
+    const img = art.querySelector('img[src*="http"]');
+    if (img) imageUrl = img.src;
+
+    out.push({ title: title.slice(0, 160), url: link, price: price ? String(price) : null, image_url: imageUrl });
+    seen.add(link);
+  }
+  if (out.length > 0) return out;
+
+  // 2. Coches.net specific extraction
+  const cnetCards = document.querySelectorAll('.mt-CardAd, [class*="CardAd"], [data-testid*="card-ad"]');
+  for (const card of cnetCards) {
+    if (out.length >= 35) break;
+    const linkEl = card.querySelector('a[href*="-covo.aspx"], a[href*="/segunda-mano/"], a[data-testid="card-ad-link"], a[href]');
+    if (!linkEl || !linkEl.href || linkEl.href.includes('javascript:')) continue;
+    let link = linkEl.href;
+    if (link.startsWith('/')) link = 'https://www.coches.net' + link;
+    if (seen.has(link)) continue;
+
+    const titleEl = card.querySelector('h2, h3, .mt-CardAd-infoHeaderTitleLink, a');
+    const title = titleEl ? titleEl.innerText.replace(/\\s+/g, ' ').trim() : '';
+    if (title.length < 5) continue;
+
+    const priceEl = card.querySelector('[data-testid*="price"], [class*="price" i]');
+    const priceText = priceEl ? priceEl.innerText.trim() : card.innerText;
+
+    let imageUrl = null;
+    const img = card.querySelector('img[src*="http"]');
+    if (img) imageUrl = img.src;
+
+    out.push({ title: title.slice(0, 160), url: link, price: priceText ? priceText.slice(0, 50) : null, image_url: imageUrl });
+    seen.add(link);
+  }
+  if (out.length > 0) return out;
+
+  // 3. Milanuncios specific extraction
+  const maCards = document.querySelectorAll('article[data-testid="AD_CARD"], article.ma-AdCardV2, [class*="ma-AdCard"]');
+  for (const card of maCards) {
+    if (out.length >= 35) break;
+    const linkEl = card.querySelector('a[href*=".htm"]');
+    if (!linkEl || !linkEl.href) continue;
+    const link = linkEl.href;
+    if (seen.has(link)) continue;
+
+    const title = linkEl.innerText.replace(/\\s+/g, ' ').trim();
+    if (title.length < 5) continue;
+
+    const priceMatch = card.innerText.match(/(\\d[\\d\\s\\.\\,]*\\s*€|€\\s*\\d[\\d\\s\\.\\,]*)/);
+    const price = priceMatch ? priceMatch[0] : null;
+
+    let imageUrl = null;
+    const img = card.querySelector('img[src*="http"]');
+    if (img) imageUrl = img.src;
+
+    out.push({ title: title.slice(0, 160), url: link, price: price, image_url: imageUrl });
+    seen.add(link);
+  }
+  if (out.length > 0) return out;
+
+  // 4. Wallapop & Generic vehicle cards (Fallback without 'li' navbar noise)
+  const genericCards = document.querySelectorAll('a[href*="/item/"], article, [data-testid*="result"], [class*="item-card" i], [class*="ItemCard" i]');
+  const priceRe = /(\\d[\\d\\s\\.\\,]*\\s*€|€\\s*\\d[\\d\\s\\.\\,]*)/;
+  for (const card of genericCards) {
+    if (out.length >= 35) break;
+    let link = card.tagName === 'A' ? card.href : (card.querySelector('a[href*="/item/"], a[href]')?.href || '');
+    if (!link || !link.startsWith('http') || seen.has(link)) continue;
+
+    const lowLink = link.toLowerCase();
+    if (lowLink.includes('/account') || lowLink.includes('/login') || lowLink.includes('/profesionales') || lowLink.includes('/inmobiliaria') || lowLink.includes('rentingcoches.com')) continue;
+
+    const cardText = (card.innerText || '').replace(/\\s+/g, ' ').trim();
+    const priceMatch = cardText.match(priceRe);
+    if (!priceMatch) continue;
+
+    const titleEl = card.querySelector('h2,h3,h1,[class*="title" i],[class*="Title" i]');
+    let title = titleEl ? titleEl.innerText.replace(/\\s+/g, ' ').trim() : '';
+    if (title.length < 5) {
+      title = cardText.split('\\n')[0].slice(0, 120);
     }
-    out.push({ title: title, url: best, image_url: imageUrl, price: price });
-    seen.add(best);
+    if (title.length < 5) continue;
+
+    let imageUrl = null;
+    const img = card.querySelector('img[src*="http"]');
+    if (img && !img.src.includes('logo') && !img.src.includes('avatar') && !img.src.endsWith('.svg')) {
+      imageUrl = img.src;
+    }
+
+    out.push({ title: title.slice(0, 160), url: link, image_url: imageUrl, price: priceMatch[0] });
+    seen.add(link);
   }
   return out;
 }"""
@@ -203,18 +292,33 @@ EXTRACT_DETAIL_JS = """() => {
   };
 }"""
 
-PRICE_RE = re.compile(r"(\d[\d\.\,]*)\s*€")
+PRICE_RE = re.compile(
+    r"(?:€\s*(\d{1,3}(?:[\.\s]\d{3})*(?:,\d+)?|\d+)|(\d{1,3}(?:[\.\s]\d{3})*(?:,\d+)?|\d+)\s*€)"
+)
 
 
 def _parse_price(text: Optional[str]) -> Optional[int]:
-    match = PRICE_RE.search(text or "")
-    if not match:
+    if not text:
         return None
-    raw = match.group(1).replace(".", "").replace(",", ".")
-    try:
-        return int(float(raw))
-    except ValueError:
-        return None
+    if isinstance(text, (int, float)):
+        return int(text)
+    clean = str(text).replace("\xa0", " ").strip()
+    m = PRICE_RE.search(clean)
+    if m:
+        num_str = m.group(1) or m.group(2)
+        digits = re.sub(r"[^\d]", "", num_str.split(",")[0])
+        if digits:
+            try:
+                val = int(digits)
+                if 100 <= val <= 500000:
+                    return val
+            except ValueError:
+                pass
+    if clean.isdigit():
+        val = int(clean)
+        if 100 <= val <= 500000:
+            return val
+    return None
 
 
 def _resolve_entry_price(entry: dict) -> Optional[int]:
@@ -294,6 +398,7 @@ class SearchRequest(BaseModel):
     query: str
     max_price: Optional[int] = None
     min_price: Optional[int] = None
+    doors: Optional[int] = None
     sources: Optional[List[str]] = ["coches_net", "autoscout24", "wallapop"]
 
 
@@ -374,13 +479,14 @@ async def _scrape_source(
     query: str,
     max_price: Optional[int],
     min_price: Optional[int] = None,
+    doors: Optional[int] = None,
 ) -> List[CarItem]:
     """Scrapes one portal. Returns real listings only; empty list on any failure."""
     if not _pool_active():
         logger.warning("[BrowserWorker] Chromium pool unavailable; skipping source '%s'.", source)
         return []
     keywords = _clean_query_for_portal(query)
-    url = _build_portal_url(source, keywords, max_price)
+    url = _build_portal_url(source, keywords, max_price, min_price, doors)
     if not url:
         logger.warning("[BrowserWorker] Unknown source '%s'; skipping.", source)
         return []
@@ -469,12 +575,12 @@ async def search_portal(req: SearchRequest):
     Executes in an isolated container with a bounded Chromium pool.
     Never returns fabricated listings: failures yield an empty list.
     """
-    logger.info(f"[BrowserWorker] Searching query='{req.query}' max_price={req.max_price} min_price={req.min_price}")
+    logger.info(f"[BrowserWorker] Searching query='{req.query}' max_price={req.max_price} min_price={req.min_price} doors={req.doors}")
     sources = req.sources or []
     if not sources:
         return []
     per_source = await asyncio.gather(
-        *[_scrape_source(source, req.query, req.max_price, req.min_price) for source in sources]
+        *[_scrape_source(source, req.query, req.max_price, req.min_price, req.doors) for source in sources]
     )
     results: List[CarItem] = [item for group in per_source for item in group]
     return results

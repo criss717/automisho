@@ -38,13 +38,14 @@ async def _scrape_via_browser_worker(req: ScrapeRequest) -> list[CarResult] | No
     """
     sources = _map_sources_for_browser(req.source)
     try:
-        async with httpx.AsyncClient(timeout=25.0) as client:
+        async with httpx.AsyncClient(timeout=60.0) as client:
             resp = await client.post(
                 f"{BROWSER_SERVICE_URL}/scrape/search",
                 json={
                     "query": req.query,
                     "max_price": req.max_price,
                     "min_price": req.min_price,
+                    "doors": req.doors,
                     "sources": sources,
                 },
             )
