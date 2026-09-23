@@ -46,17 +46,22 @@ def _make_fake_client(resp=None, exc=None):
 def test_map_sources_for_browser():
     assert _map_sources_for_browser("auto") == [
         "coches_net",
-        "autoscout24",
-        "wallapop",
         "milanuncios",
+        "wallapop",
+        "autoscout24",
     ]
     assert _map_sources_for_browser("deep") == [
         "coches_net",
-        "autoscout24",
-        "wallapop",
         "milanuncios",
+        "wallapop",
+        "autoscout24",
     ]
-    assert _map_sources_for_browser("standard") == ["coches_net", "autoscout24"]
+    assert _map_sources_for_browser("standard") == [
+        "coches_net",
+        "milanuncios",
+        "wallapop",
+        "autoscout24",
+    ]
     assert _map_sources_for_browser("autoscout24") == ["autoscout24"]
 
 

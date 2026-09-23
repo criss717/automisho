@@ -16,10 +16,8 @@ BROWSER_SERVICE_URL = os.getenv("BROWSER_SERVICE_URL", "http://automisho-browser
 
 def _map_sources_for_browser(source: str) -> list[str]:
     """Map a ScrapeRequest source to browser worker source names."""
-    if source in ("auto", "deep"):
-        return ["coches_net", "autoscout24", "wallapop", "milanuncios"]
-    if source in ("fast", "standard"):
-        return ["coches_net", "autoscout24"]
+    if source in ("auto", "deep", "fast", "standard"):
+        return ["coches_net", "milanuncios", "wallapop", "autoscout24"]
     # Single simple source (e.g. "autoscout24") -> [that one]
     return [source]
 
@@ -74,6 +72,7 @@ async def _scrape_via_browser_worker(req: ScrapeRequest) -> list[CarResult] | No
                 fuel=item.get("fuel"),
                 url=item.get("url"),
                 image_url=item.get("image_url"),
+                description=item.get("description"),
                 source=item.get("source") or "browser",
             ))
         except Exception as e:
@@ -93,6 +92,14 @@ def _apply_post_filters(flat: list[CarResult], req: ScrapeRequest) -> list[CarRe
         flat = [c for c in flat if (c.price and c.price <= req.max_price * 1.05)]
     if req.min_price:
         flat = [c for c in flat if (c.price and c.price >= req.min_price * 0.95)]
+
+    # Purge cars from excluded makes (e.g. 'no opel ni peugeot')
+    _, excluded_makes = _extract_makes_intent(req.query)
+    if excluded_makes:
+        flat = [
+            c for c in flat
+            if not any(re.search(rf"\b{re.escape(ex)}\b", (c.title or "").lower()) for ex in excluded_makes)
+        ]
 
     # Strict door count filter if requested
     if req.doors == 3:
@@ -234,11 +241,38 @@ def _client_kwargs(headers=None):
     return kwargs
 
 
+def _extract_makes_intent(query: str) -> tuple[list[str], list[str]]:
+    """Extract wanted and excluded makes from query text.
+
+    Recognizes negative context like 'no opel', 'ni peugeot', 'menos renault',
+    'excepto seat', 'sin citroen', 'descartar bmw'.
+    Returns (wanted_makes, excluded_makes).
+    """
+    if not query:
+        return [], []
+    words = re.sub(r"[^\w\s]", " ", query.lower()).split()
+    negation_tokens = {"no", "ni", "sin", "menos", "excepto", "descartar", "descarto", "fuera"}
+    wanted: list[str] = []
+    excluded: list[str] = []
+
+    for i, w in enumerate(words):
+        if w in KNOWN_MAKES:
+            # Check if any of the preceding 1..2 tokens is a negation
+            prev1 = words[i - 1] if i > 0 else ""
+            prev2 = words[i - 2] if i > 1 else ""
+            if prev1 in negation_tokens or prev2 in negation_tokens:
+                if w not in excluded:
+                    excluded.append(w)
+            else:
+                if w not in wanted:
+                    wanted.append(w)
+
+    return wanted, excluded
+
+
 def _has_known_make(text: str) -> bool:
-    if not text:
-        return False
-    toks = text.lower().split()
-    return any(t in KNOWN_MAKES for t in toks)
+    wanted, _ = _extract_makes_intent(text)
+    return len(wanted) > 0
 
 
 def _city_coords(query: str) -> tuple[float, float]:
@@ -507,24 +541,20 @@ async def _scrape_autoscout24(req: ScrapeRequest) -> list[CarResult]:
 
 
 
+    # Extract real wanted makes vs excluded makes
+    wanted_makes, excluded_makes = _extract_makes_intent(req.query)
+
     # URL builder robust with fallback to keywords param for ambiguous cases
-    # Special body-type case (suv familiar etc) has priority even though not in KNOWN_MAKES
-    known_parts = [p for p in clean_parts if p in KNOWN_MAKES]
     if len(clean_parts) >= 2 and clean_parts[0] in {"suv", "berlina", "utilitario"} and clean_parts[1] in {"familiar", "compacto"}:
         url = "https://www.autoscout24.es/lst"
         params["keywords"] = req.query
-    elif not known_parts:
-        # No known make/model -> generic listing with keywords param if original query has meaningful terms
+    elif not wanted_makes:
+        # No wanted make -> generic price listing, DO NOT put excluded make in the URL!
         url = "https://www.autoscout24.es/lst"
-        if _has_known_make(req.query):
-            params["keywords"] = req.query
-        else:
-            # No known make at all -> don't filter by keywords, only by price (avoid gibberish filtering to 0)
-            pass
-    elif len(known_parts) >= 2:
-        url = f"https://www.autoscout24.es/lst/{quote(known_parts[0])}/{quote(known_parts[1])}"
-    elif len(known_parts) == 1:
-        url = f"https://www.autoscout24.es/lst/{quote(known_parts[0])}"
+    elif len(wanted_makes) >= 2:
+        url = f"https://www.autoscout24.es/lst/{quote(wanted_makes[0])}/{quote(wanted_makes[1])}"
+    elif len(wanted_makes) == 1:
+        url = f"https://www.autoscout24.es/lst/{quote(wanted_makes[0])}"
     else:
         url = "https://www.autoscout24.es/lst"
 
@@ -627,14 +657,14 @@ async def _scrape_cochesnet(req: ScrapeRequest) -> list[CarResult]:
     if not clean_query:
         clean_query = req.query
 
-    has_known = _has_known_make(clean_query)
+    wanted_makes, excluded_makes = _extract_makes_intent(clean_query)
     params: dict[str, str] = {}
-    if has_known:
-        params["Keywords"] = clean_query
+    if wanted_makes:
+        params["Keywords"] = " ".join(wanted_makes)
     else:
-        # Spec: if clean_query no contiene make conocido, manda Keywords="" o no filtres por make, solo por precio.
+        # If no positive make, send Keywords="" to search all makes under price
         params["Keywords"] = ""
-        logger.info(f"coches.net: clean_query '{clean_query}' has no known make, using Keywords=\"\" and only price filters")
+        logger.info(f"coches.net: clean_query '{clean_query}' has no wanted make (excluded: {excluded_makes}), using Keywords=\"\" and only price filters")
 
     if req.min_price:
         params["MinPrice"] = str(req.min_price)

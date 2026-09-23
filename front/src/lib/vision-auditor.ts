@@ -6,6 +6,8 @@ export interface VisionAuditOptions {
   requestedDoors?: number;
   userQuery?: string;
   price?: number | string;
+  description?: string | null;
+  targetCount?: number;
 }
 
 /**
@@ -42,37 +44,43 @@ export async function auditSingleCarImage(
     const buffer = Buffer.from(arrayBuf);
 
     const userContext = opts.userQuery
-      ? `Petición / Preferencias del usuario: "${opts.userQuery}"`
+      ? `Requisitos estrictos solicitados por el usuario: "${opts.userQuery}"`
       : "Inspección técnica general para compraventa de ocasión en España";
 
-    const prompt = `Analiza la fotografía de este coche en venta ("${carTitle}"${opts.price ? `, precio: ${opts.price}` : ""}).
-${userContext}
+    const descriptionContext = opts.description
+      ? `\nDescripción/detalles publicados por el vendedor:\n"${opts.description.slice(0, 700)}"`
+      : "";
 
-Identifica e inspecciona visualmente:
-1. "color": Color principal exterior de la carrocería (ej: "rojo", "negro", "blanco", "gris/plata", "azul", "verde", "amarillo").
-2. "bodyType": Tipo de carrocería visible ("descapotable/cabrio", "coupé", "utilitario/compacto", "sedán/berlina", "familiar", "suv").
+    const prompt = `Eres el Auditor Técnico Oficial de AutoMisho. Analiza conjuntamente la fotografía y el texto de este anuncio en venta ("${carTitle}"${opts.price ? `, precio: ${opts.price}` : ""}).
+${userContext}${descriptionContext}
+
+Realiza una auditoría exhaustiva contrastando la imagen y la descripción del anuncio con lo que busca el usuario:
+1. "color": Color principal exterior de la carrocería visible en la foto (ej: "rojo", "negro", "blanco", "gris/plata", "azul", "verde", "amarillo", "marrón").
+2. "bodyType": Tipo de carrocería ("descapotable/cabrio", "coupé", "utilitario/compacto", "sedán/berlina", "familiar/station wagon", "suv/monovolumen").
 3. "doors": Número de puertas laterales (3 si es utilitario 3p o coupé, 5 si es 4 puertas + portón, null si no se distingue).
-4. "verified3p": true si es 3 puertas / coupé / cabrio de 2 plazas, false en caso contrario.
-5. "bodyCondition": Estado exterior en 1 frase (pintura, brillo de faros, si hay arañazos, abolladuras o daños visibles).
-6. "userCriteriaMatch": true si cumple con lo solicitado por el usuario (ej. color pedido, descapotable, reventa, etc.), false si no cumple, o null si la búsqueda no especificó requisitos concretos.
-7. "criteriaNotes": 1 frase explicando cómo encaja con lo que busca el usuario.
-8. "flipOpportunity": Evaluación de oportunidad de negocio / reventa:
+4. "verified3p": true si es 3 puertas / coupé / cabrio, false en caso contrario.
+5. "bodyCondition": Estado exterior en 1 frase (pintura, brillo de faros, abolladuras, arañazos o piezas desgastadas).
+6. "userCriteriaMatch": true si cumple fielmente lo que busca el usuario. false si viola CUALQUIER requisito expresado por el usuario (ej: color excluido o no pedido, marca no deseada, potencia insuficiente para su objetivo, o anomalías/averías no solicitadas en la descripción).
+7. "rejectionReason": Si userCriteriaMatch es false, explica en 1 frase concisa por qué se rechaza (ej: "El coche es de color negro en la foto y el usuario pidió exclusivamente blanco, azul, gris o rojo", o "La descripción indica avería de culata/para piezas"). Si cumple, déjalo en null.
+8. "criteriaNotes": 1 frase explicando cómo encaja con lo que busca el usuario.
+9. "flipOpportunity":
    - "flipPotential": "Alto" | "Medio" | "Bajo" | null
-   - "damageSummary": Daños visibles en chapa/ópticas ("Sin daños aparentes" o descripción breve)
-   - "estimatedRepairCost": Estimación orientativa de arreglo si hay daños (ej: "50-100€ pulido", "0€")
+   - "damageSummary": Daños visibles en chapa/ópticas ("Sin daños aparentes" o descripción)
+   - "estimatedRepairCost": Estimación orientativa de arreglo (ej: "0€", "100-200€ pintura")
 
 Responde ÚNICAMENTE un JSON válido con este formato:
 {
   "color": "rojo",
-  "bodyType": "descapotable/cabrio",
+  "bodyType": "utilitario/compacto",
   "doors": 3,
   "verified3p": true,
-  "bodyCondition": "Faros limpios, pintura en buen estado aparente, sin golpes visibles",
+  "bodyCondition": "Pintura con brillo, sin golpes visibles",
   "userCriteriaMatch": true,
+  "rejectionReason": null,
   "criteriaNotes": "Cumple los criterios solicitados por el usuario",
   "flipOpportunity": {
     "flipPotential": "Alto",
-    "damageSummary": "Sin daños aparentes, precio atractivo para reventa",
+    "damageSummary": "Sin daños aparentes",
     "estimatedRepairCost": "0€"
   }
 }`;
@@ -104,11 +112,13 @@ Responde ÚNICAMENTE un JSON válido con este formato:
 
     if (!responseText) return null;
 
-    // 4. Parse JSON from output
-    const jsonMatch = responseText.match(/\{[\s\S]*?\}/);
-    if (!jsonMatch) return null;
+    // 4. Parse JSON from output (outermost braces to preserve nested objects)
+    const startIdx = responseText.indexOf("{");
+    const endIdx = responseText.lastIndexOf("}");
+    if (startIdx === -1 || endIdx <= startIdx) return null;
 
-    const parsed = JSON.parse(jsonMatch[0]);
+    const jsonStr = responseText.slice(startIdx, endIdx + 1);
+    const parsed = JSON.parse(jsonStr);
     const doors = typeof parsed.doors === "number" ? parsed.doors : null;
     const bodyCondition = typeof parsed.bodyCondition === "string" ? parsed.bodyCondition.trim() : undefined;
     const verified3p = parsed.verified3p === true || doors === 3;
@@ -116,6 +126,7 @@ Responde ÚNICAMENTE un JSON válido con este formato:
     const bodyTypeDetected = typeof parsed.bodyType === "string" ? parsed.bodyType.trim() : null;
     const userCriteriaMatch = typeof parsed.userCriteriaMatch === "boolean" ? parsed.userCriteriaMatch : null;
     const criteriaNotes = typeof parsed.criteriaNotes === "string" ? parsed.criteriaNotes.trim() : null;
+    const rejectionReason = typeof parsed.rejectionReason === "string" ? parsed.rejectionReason.trim() : null;
 
     let flipOpportunity = null;
     if (parsed.flipOpportunity && typeof parsed.flipOpportunity === "object") {
@@ -134,6 +145,7 @@ Responde ÚNICAMENTE un JSON válido con este formato:
       bodyTypeDetected,
       userCriteriaMatch,
       criteriaNotes,
+      rejectionReason,
       flipOpportunity,
     };
   } catch (err) {
@@ -174,9 +186,11 @@ export async function auditCarVisuals(
     typeof options === "number" ? { requestedDoors: options } : options || {};
   const requestedDoors = opts.requestedDoors;
 
-  // Audit up to the top 4 candidates, 2 at a time to avoid provider rate limits
-  const topCandidates = cars.slice(0, 4);
-  const remainingCars = cars.slice(4);
+  // Dynamically audit enough candidates to satisfy requested count (default up to 12)
+  const targetCount = opts.targetCount || 10;
+  const auditBudget = Math.min(cars.length, Math.max(8, targetCount + 3));
+  const candidatePool = cars.slice(0, auditBudget);
+  const remainingCars = cars.slice(auditBudget);
 
   const auditOne = async (car: CarResult): Promise<CarResult> => {
     if (!car.image_url) return car;
@@ -184,6 +198,7 @@ export async function auditCarVisuals(
     const visualAudit = await auditSingleCarImage(car.image_url, car.title, {
       ...opts,
       price: car.price,
+      description: car.description,
     });
     if (!visualAudit) return car;
 
@@ -212,11 +227,10 @@ export async function auditCarVisuals(
       }
     } else if (visualAudit.userCriteriaMatch === false) {
       if (typeof enrichedCar.score === "number") {
-        enrichedCar.score = Math.max(50, enrichedCar.score - 25);
+        enrichedCar.score = Math.max(40, enrichedCar.score - 40);
       }
-      if (visualAudit.criteriaNotes) {
-        cons.unshift(`⚠ Visión IA: ${visualAudit.criteriaNotes}`);
-      }
+      const reason = visualAudit.rejectionReason || visualAudit.criteriaNotes || "No cumple con las preferencias expresadas";
+      cons.unshift(`⛔ Descartado por IA: ${reason}`);
     }
 
     // Color & Body type
@@ -247,19 +261,19 @@ export async function auditCarVisuals(
     return enrichedCar;
   };
 
-  const settled = await auditInBatches(topCandidates, auditOne, 2);
-  const auditedTop = settled.map((res, i) => (res.status === "fulfilled" ? res.value : topCandidates[i]));
+  const settled = await auditInBatches(candidatePool, auditOne, 3);
+  const auditedPool = settled.map((res, i) => (res.status === "fulfilled" ? res.value : candidatePool[i]));
 
   // Re-sort: cars matching user criteria first, then by score
-  auditedTop.sort((a, b) => {
-    const aMatch = a.visualAudit?.userCriteriaMatch === true ? 1 : 0;
-    const bMatch = b.visualAudit?.userCriteriaMatch === true ? 1 : 0;
+  auditedPool.sort((a, b) => {
+    const aMatch = a.visualAudit?.userCriteriaMatch === true ? 1 : a.visualAudit?.userCriteriaMatch === false ? -1 : 0;
+    const bMatch = b.visualAudit?.userCriteriaMatch === true ? 1 : b.visualAudit?.userCriteriaMatch === false ? -1 : 0;
     if (aMatch !== bMatch) return bMatch - aMatch;
     return (Number(b.score) || 0) - (Number(a.score) || 0);
   });
 
   // If user requested 3 doors, re-filter if vision confirmed 5 doors and we have other 3p cars
-  let finalCars = [...auditedTop, ...remainingCars];
+  let finalCars = [...auditedPool, ...remainingCars];
   if (requestedDoors === 3) {
     const verified3pCars = finalCars.filter(
       (c) => !c.visualAudit || c.visualAudit.doorsDetected !== 5

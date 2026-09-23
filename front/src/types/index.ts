@@ -14,6 +14,7 @@ export interface VisualAudit {
   bodyTypeDetected?: string | null;
   userCriteriaMatch?: boolean | null;
   criteriaNotes?: string | null;
+  rejectionReason?: string | null;
   flipOpportunity?: FlipOpportunity | null;
 }
 
@@ -32,6 +33,7 @@ export interface CarResult {
   fuel?: string | null;
   currency?: string;
   doors?: number | null;
+  description?: string | null;
   pros?: string[];
   cons?: string[];
   visualAudit?: VisualAudit | null;

@@ -22,20 +22,18 @@ import { detectVIN, detectPlate, detectCarSearch, enrichCarResult, isCarMatching
 
 import { lookupVehicleDgt } from "@/lib/dgt-client";
 
-async function searchBackend(query: string, maxPrice?: number, minPrice?: number, searchMode: string = "standard", doors?: number) {
+async function searchBackend(query: string, maxPrice?: number, minPrice?: number, doors?: number) {
   const controller = new AbortController();
-  const timeoutMs = searchMode === "deep" ? 85000 : 70000;
+  const timeoutMs = 85000;
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const backendSource = searchMode === "deep" ? "deep" : "standard";
-    const max_results = searchMode === "deep" ? 40 : 25;
     const res = await fetch(`${BACKEND_URL}/scrape`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         query,
-        source: backendSource,
-        max_results,
+        source: "deep",
+        max_results: 50,
         max_price: maxPrice,
         min_price: minPrice,
         doors,
@@ -53,15 +51,16 @@ async function searchBackend(query: string, maxPrice?: number, minPrice?: number
   }
 }
 
-async function agentSearchBackend(userText: string) {
+async function agentSearchBackend(userText: string, maxPrice?: number) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 75000);
   try {
+    const promptText = maxPrice ? `${userText} (PRESUPUESTO MÁXIMO ESTRICTO: ${maxPrice}€)` : userText;
     const res = await fetch(`${BACKEND_URL}/agent/chat`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        messages: [{ role: "user", content: userText }],
+        messages: [{ role: "user", content: promptText }],
       }),
       signal: controller.signal,
     });
@@ -96,7 +95,7 @@ export async function POST(req: Request) {
     if (!parsed.success) {
       return Response.json({ error: parsed.error.flatten().fieldErrors }, { status: 400 });
     }
-    const { messages, conversationId, searchMode = "standard" } = parsed.data;
+    const { messages, conversationId } = parsed.data;
 
     if (!Array.isArray(messages) || messages.length === 0) {
       return Response.json({ error: "No messages provided" }, { status: 400 });
@@ -132,6 +131,43 @@ export async function POST(req: Request) {
     const plate = detectPlate(userText);
     const vin = detectVIN(userText);
 
+    // Contextual Memory: inherit filters from recent conversation history if not specified in current message
+    if (messages.length > 1) {
+      for (let i = messages.length - 2; i >= 0; i--) {
+        const prevMsg = messages[i];
+        if (prevMsg.role !== "user") continue;
+        const prevText =
+          (prevMsg.parts as unknown as { type: string; text?: string }[])
+            ?.filter((p) => p.type === "text")
+            .map((p) => p.text)
+            .join("") || "";
+        if (!prevText) continue;
+
+        const prevSearch = detectCarSearch(prevText);
+        if (search.maxPrice === undefined && prevSearch.maxPrice !== undefined) {
+          search.maxPrice = prevSearch.maxPrice;
+        }
+        if (search.minPrice === undefined && prevSearch.minPrice !== undefined) {
+          search.minPrice = prevSearch.minPrice;
+        }
+        if (search.doors === undefined && prevSearch.doors !== undefined) {
+          search.doors = prevSearch.doors;
+        }
+        // Inherit excluded makes (e.g. "no opel ni peugeot") across messages
+        if ((!search.excludedMakes || search.excludedMakes.length === 0) && prevSearch.excludedMakes && prevSearch.excludedMakes.length > 0) {
+          search.excludedMakes = prevSearch.excludedMakes;
+        }
+        // Inherit colors unless user explicitly says "cualquier color" or "sin preferencia de color"
+        const resetColorIntent = /(?:cualquier|todos? los?|da igual el|sin preferencia de)\s*colou?r(?:es)?/i.test(userText);
+        if (!resetColorIntent && (!search.colors || search.colors.length === 0) && prevSearch.colors && prevSearch.colors.length > 0) {
+          search.colors = prevSearch.colors;
+        }
+        if (prevSearch.isSearch) {
+          search.isSearch = true;
+        }
+      }
+    }
+
     let contextData = "";
     let extraData: Record<string, unknown> | null = null;
     const extraDataCars: unknown[] = [];
@@ -163,8 +199,8 @@ export async function POST(req: Request) {
       // Agent and direct scrape run in parallel; prefer the agent when it
       // returns non-empty cars, else fall back to scrape, else null.
       const [agentSettled, scrapeSettled] = await Promise.allSettled([
-        agentSearchBackend(userText),
-        searchBackend(search.query, search.maxPrice, search.minPrice, searchMode, search.doors),
+        agentSearchBackend(userText, search.maxPrice),
+        searchBackend(search.query, search.maxPrice, search.minPrice, search.doors),
       ]);
       const agentResults =
         agentSettled.status === "fulfilled" ? agentSettled.value : null;
@@ -189,10 +225,29 @@ export async function POST(req: Request) {
           ? (scrapeResults as { source?: string } | null)?.source ?? "scrape"
           : "none";
       console.log("[chat] agent:", agentSettled.status, hasAgentCars ? "cars" : "empty", "| scrape:", scrapeSettled.status, hasScrapeCars ? "cars" : "empty", "| chosen:", chosen);
-      console.log("[chat] search results:", (searchResults as { total?: number } | null)?.total ?? 0, "from", (searchResults as { source?: string } | null)?.source, "mode:", searchMode, "maxPrice", search.maxPrice, "doors:", search.doors);
+      console.log("[chat] search results:", (searchResults as { total?: number } | null)?.total ?? 0, "from", (searchResults as { source?: string } | null)?.source, "maxPrice", search.maxPrice, "doors:", search.doors);
 
       if (searchResults?.results?.length > 0) {
-        const enriched = searchResults.results.map((c: Record<string, unknown>) =>
+        // Enforce hard price filter: discard any car exceeding user maxPrice by more than 5%
+        let validCars = searchResults.results as Record<string, unknown>[];
+        if (search.maxPrice) {
+          validCars = validCars.filter((c) => {
+            const price = Number(c.price);
+            if (!price || isNaN(price)) return false;
+            return price <= (search.maxPrice as number) * 1.05;
+          });
+        }
+
+        // Enforce excluded makes filter: immediately purge any car matching an excluded brand
+        if (search.excludedMakes && search.excludedMakes.length > 0) {
+          const excludedList = search.excludedMakes;
+          validCars = validCars.filter((c) => {
+            const title = String(c.title || "").toLowerCase();
+            return !excludedList.some((brand) => new RegExp(`\\b${brand}\\b`, "i").test(title));
+          });
+        }
+
+        const enriched = validCars.map((c: Record<string, unknown>) =>
           enrichCarResult(c, search.maxPrice, search.doors)
         );
 
@@ -218,32 +273,71 @@ export async function POST(req: Request) {
         // Sort by score descending to prioritize best value/quality options
         let sortedEnriched = [...filteredEnriched].sort((a, b) => (Number(b.score) || 0) - (Number(a.score) || 0));
 
-        // Multimodal AI Vision Audit: Inspect photos of candidate cars in real time
+        // Extract requested count if user asked for a specific number (e.g. "las diez mejores", "top 5", "3 coches")
+        const countMatch = userText.match(/\b(?:los|las)?\s*(diez|dieci|cinco|tres|cuatro|seis|siete|ocho|nueve|\d{1,2})\s*(?:mejores|opciones|primeros|coches|vehiculos|candidatos)?\b/i);
+        let requestedCount = 10;
+        if (countMatch) {
+          const numStr = countMatch[1].toLowerCase();
+          const wordToNum: Record<string, number> = {
+            diez: 10,
+            cinco: 5,
+            tres: 3,
+            cuatro: 4,
+            seis: 6,
+            siete: 7,
+            ocho: 8,
+            nueve: 9,
+          };
+          requestedCount = wordToNum[numStr] || parseInt(numStr, 10) || 10;
+          requestedCount = Math.max(1, Math.min(requestedCount, 20));
+        }
+
+        // Multimodal AI Vision & Description Audit: Inspect candidates against user criteria
         try {
           const { auditCarVisuals } = await import("@/lib/vision-auditor");
+          // Include full context so visual auditor knows entire constraint history
+          const auditContextQuery = search.maxPrice
+            ? `${userText} (PRESUPUESTO MÁXIMO: ${search.maxPrice}€)`
+            : userText;
           sortedEnriched = await auditCarVisuals(sortedEnriched, {
             requestedDoors: search.doors,
-            userQuery: userText,
+            userQuery: auditContextQuery,
+            targetCount: requestedCount,
           });
 
-          // Post-audit color filter: if AI vision detected car color, filter strictly by requested colors
+          // Post-audit color filter: if user requested specific colors, strictly exclude non-matching colors
           if (search.colors && search.colors.length > 0) {
             const visualColorMatched = sortedEnriched.filter((c) => {
               const audit = c.visualAudit as import("@/types").VisualAudit | undefined;
-              return isCarMatchingColor(c.title, search.colors, audit?.colorDetected);
+              // If AI detected a color and it's NOT in requested colors, discard it
+              if (audit?.colorDetected && !isCarMatchingColor(c.title, search.colors, audit.colorDetected)) {
+                return false;
+              }
+              // If userCriteriaMatch is explicitly false due to color, discard it
+              if (audit?.userCriteriaMatch === false && (audit.rejectionReason?.toLowerCase().includes("color") || audit.criteriaNotes?.toLowerCase().includes("color"))) {
+                return false;
+              }
+              return true;
             });
             if (visualColorMatched.length > 0) {
               sortedEnriched = visualColorMatched;
             }
+          }
+
+          // Prioritize cars that pass userCriteriaMatch, discard rejected ones if enough valid ones exist
+          const fullyMatched = sortedEnriched.filter((c) => (c.visualAudit as import("@/types").VisualAudit | undefined)?.userCriteriaMatch !== false);
+          if (fullyMatched.length >= Math.min(requestedCount, 3)) {
+            sortedEnriched = fullyMatched;
           }
         } catch (visionErr) {
           console.warn("[chat] Vision audit error, proceeding with text metadata:", visionErr);
         }
 
         const cars = sortedEnriched
+          .slice(0, requestedCount)
           .map(
-            (c: Record<string, unknown>, i: number) => {
-              const audit = c.visualAudit as import("@/types").VisualAudit | undefined;
+            (c: import("@/types").CarResult, i: number) => {
+              const audit = c.visualAudit;
               const visionParts: string[] = [];
               if (audit) {
                 if (audit.verified3p) visionParts.push("3p confirmado en foto");
@@ -251,7 +345,7 @@ export async function POST(req: Request) {
                 if (audit.colorDetected) visionParts.push(`Color: ${audit.colorDetected}`);
                 if (audit.bodyTypeDetected) visionParts.push(`Carrocería: ${audit.bodyTypeDetected}`);
                 if (audit.bodyCondition) visionParts.push(`Estado: ${audit.bodyCondition}`);
-                if (audit.criteriaNotes) visionParts.push(`Preferencia: ${audit.criteriaNotes}`);
+                if (audit.criteriaNotes) visionParts.push(`Auditoría: ${audit.criteriaNotes}`);
                 if (audit.flipOpportunity?.flipPotential) {
                   visionParts.push(
                     `Oportunidad Reventa: Potencial ${audit.flipOpportunity.flipPotential} (${audit.flipOpportunity.damageSummary || "sin daños graves"})`
@@ -270,10 +364,12 @@ export async function POST(req: Request) {
           : "";
 
         const colorPromptRule = search.colors && search.colors.length > 0
-          ? `\n\nREGLA CRÍTICA DE COLOR: El usuario exige exclusivamente vehículo de color ${search.colors.join(" o ")}. Menciona explícitamente el color confirmado por Visión IA en la fotografía del anuncio para cada candidato.`
+          ? `\n\nREGLA CRÍTICA DE COLOR: El usuario exige exclusivamente vehículo de color ${search.colors.join(" o ")}. Queda TERMINANTEMENTE PROHIBIDO recomendar vehículos de colores excluidos (como negro, verde, marrón, etc.). Menciona explícitamente el color confirmado por Visión IA en la fotografía del anuncio para cada candidato.`
           : "";
 
-        contextData += `\n\n## Resultados reales ordenados por puntuación IA (${sortedEnriched.length} coches analizados en el mercado español):\n${cars}\n\nInstrucción de Calidad y Coherencia: Presenta los mejores candidatos tomando estrictamente los primeros N coches de la lista anterior ordenada por puntuación. Tus recomendaciones deben coincidir de forma exacta con los vehículos analizados en el mercado. Para cada coche incluye: Precio, Kilometraje, Año, Combustible, Fuente y enlace [Ver anuncio ↗](url), 1-2 Ventajas reales y 1 Punto a revisar. Si el coche incluye información de [Visión IA: ...], menciona explícitamente en el texto lo que has auditado visualmente en la fotografía del anuncio (color, tipo de carrocería, estado de chapa/faros, potencial de reventa o daños detectados). Concluye SIEMPRE con las 3 preguntas clave para la llamada al vendedor (facturas de distribución/embrague, matrícula exacta o VIN, y motivo de venta).${proactiveFilterPrompt}${colorPromptRule}${search.doors ? `\n\nREGLA CRÍTICA INQUEBRANTABLE DE CARROCERÍA: El usuario exige ÚNICAMENTE vehículos de ${search.doors} puertas. Queda TERMINANTEMENTE PROHIBIDO recomendar, incluir o mencionar coches de 4 o 5 puertas, ni siquiera como "alternativas" o notas. Recomienda SOLO coches de ${search.doors} puertas.` : ""}`;
+        const quantityPromptRule = `\n\nREGLA DE CANTIDAD EXACTA: El usuario ha solicitado exactamente ${requestedCount} opciones. Debes presentar y detallar exactamente ${Math.min(requestedCount, sortedEnriched.length)} recomendaciones en tu respuesta numeradas del 1 al ${Math.min(requestedCount, sortedEnriched.length)}. No resumas ni recortes la lista a 3 o 5 si dispones de suficientes candidatos en la lista anterior.`;
+
+        contextData += `\n\n## Resultados reales ordenados por puntuación IA (${sortedEnriched.length} coches analizados en el mercado español):\n${cars}\n\nInstrucción de Calidad y Coherencia: Presenta los mejores candidatos tomando estrictamente los primeros coches de la lista anterior ordenada por puntuación. Tus recomendaciones deben coincidir de forma exacta con los vehículos analizados en el mercado. Para cada coche incluye: Precio, Kilometraje, Año, Combustible, Fuente y enlace [Ver anuncio ↗](url), 1-2 Ventajas reales y 1 Punto a revisar. Si el coche incluye información de [Visión IA: ...], menciona explícitamente en el texto lo que has auditado visualmente en la fotografía del anuncio (color, tipo de carrocería, estado de chapa/faros, potencial de reventa o daños detectados). Concluye SIEMPRE con las 3 preguntas clave para la llamada al vendedor (facturas de distribución/embrague, matrícula exacta o VIN, y motivo de venta).${proactiveFilterPrompt}${colorPromptRule}${quantityPromptRule}${search.doors ? `\n\nREGLA CRÍTICA INQUEBRANTABLE DE CARROCERÍA: El usuario exige ÚNICAMENTE vehículos de ${search.doors} puertas. Queda TERMINANTEMENTE PROHIBIDO recomendar, incluir o mencionar coches de 4 o 5 puertas, ni siquiera como "alternativas" o notas. Recomienda SOLO coches de ${search.doors} puertas.` : ""}`;
 
         // Collect enriched for data block and dashboard
         extraDataCars.push(...sortedEnriched);

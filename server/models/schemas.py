@@ -28,6 +28,7 @@ class CarResult(BaseModel):
     image_url: Optional[str] = None
     images: list[str] = Field(default_factory=list)
     doors: Optional[int] = None
+    description: Optional[str] = None
     source: str
 
 

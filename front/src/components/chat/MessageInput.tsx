@@ -5,7 +5,7 @@ import { useRef, useState, type KeyboardEvent, type DragEvent, type ChangeEvent 
 interface MessageInputProps {
   value: string;
   onChange: (value: string) => void;
-  onSubmit: (message: string, files?: FileList, searchMode?: "standard" | "deep") => void;
+  onSubmit: (message: string, files?: FileList) => void;
   isLoading: boolean;
 }
 
@@ -15,12 +15,11 @@ export default function MessageInput({ value, onChange, onSubmit, isLoading }: M
   const [dragOver, setDragOver] = useState(false);
   const [preview, setPreview] = useState<{ url: string | null; name: string; isPdf: boolean; sizeKb: number } | null>(null);
   const [selectedFiles, setSelectedFiles] = useState<FileList | null>(null);
-  const [searchMode, setSearchMode] = useState<"standard" | "deep">("standard");
 
   const handleSubmit = () => {
     const trimmed = value.trim();
     if ((!trimmed && !selectedFiles) || isLoading) return;
-    onSubmit(trimmed, selectedFiles ?? undefined, searchMode);
+    onSubmit(trimmed, selectedFiles ?? undefined);
     if (textareaRef.current) {
       textareaRef.current.style.height = "auto";
     }
@@ -125,40 +124,12 @@ export default function MessageInput({ value, onChange, onSubmit, isLoading }: M
         </div>
       )}
 
-      {/* Search Mode Pill Switch */}
+      {/* Multi-portal Active Status */}
       <div className="w-full max-w-2xl mx-auto mb-2 flex items-center justify-between gap-2 px-1">
-        <div className="flex items-center gap-1 bg-linen p-0.5 rounded-lg border border-mist text-[11px]">
-          <button
-            type="button"
-            onClick={() => setSearchMode("standard")}
-            className={`px-2.5 py-0.5 rounded-md transition-all flex items-center gap-1 ${
-              searchMode === "standard"
-                ? "bg-paper text-graphite font-semibold shadow-subtle border border-mist"
-                : "text-ash hover:text-charcoal"
-            }`}
-            title="Escanea hasta 50 coches en AutoScout24 y Coches.net (~2.5s)"
-          >
-            <span>⚡</span>
-            <span>Estándar (50 coches)</span>
-          </button>
-          <button
-            type="button"
-            onClick={() => setSearchMode("deep")}
-            className={`px-2.5 py-0.5 rounded-md transition-all flex items-center gap-1 ${
-              searchMode === "deep"
-                ? "bg-paper text-graphite font-semibold shadow-subtle border border-mist"
-                : "text-ash hover:text-charcoal"
-            }`}
-            title="Escanea hasta 100 coches en AutoScout24, Coches.net, Wallapop y Milanuncios (~5s)"
-          >
-            <span>🔍</span>
-            <span>Profunda (100 coches + Wallapop/Milanuncios)</span>
-          </button>
+        <div className="flex items-center gap-1.5 text-[11px] text-ash font-medium">
+          <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+          <span>Búsqueda profunda activa en portales: Coches.net, Milanuncios, Wallapop y AutoScout24</span>
         </div>
-
-        <span className="text-[10px] text-ash hidden md:inline font-medium">
-          {searchMode === "standard" ? "Rápida (~2.5s)" : "Multi-portal (~5s)"}
-        </span>
       </div>
 
       <div className="w-full max-w-2xl mx-auto flex gap-2 items-end">

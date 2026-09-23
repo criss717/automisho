@@ -39,6 +39,8 @@ export function detectCarSearch(message: string): {
   minPrice?: number;
   doors?: number;
   colors?: string[];
+  excludedMakes?: string[];
+  wantedMakes?: string[];
 } {
   const lower = message.toLowerCase();
   let maxPrice: number | undefined;
@@ -107,19 +109,44 @@ export function detectCarSearch(message: string): {
     }
   }
 
+  // Detect wanted and excluded makes with negation awareness
+  const KNOWN_BRANDS = [
+    "seat", "volkswagen", "vw", "renault", "peugeot", "pegout", "toyota",
+    "bmw", "mercedes", "ford", "opel", "nissan", "hyundai", "kia", "audi",
+    "skoda", "fiat", "citroen", "dacia", "mazda", "honda", "volvo", "alfa",
+    "chevrolet", "lancia", "mitsubishi", "suzuki", "subaru"
+  ];
+  const words = lower.replace(/[^\w\s]/g, " ").split(/\s+/);
+  const negationTokens = new Set(["no", "ni", "sin", "menos", "excepto", "descartar", "descarto", "fuera"]);
+  const excludedMakes: string[] = [];
+  const wantedMakes: string[] = [];
+
+  for (let i = 0; i < words.length; i++) {
+    let w = words[i];
+    if (w === "pegout") w = "peugeot";
+    if (KNOWN_BRANDS.includes(w)) {
+      const prev1 = i > 0 ? words[i - 1] : "";
+      const prev2 = i > 1 ? words[i - 2] : "";
+      const isNeg = negationTokens.has(prev1) || negationTokens.has(prev2);
+      if (isNeg) {
+        if (!excludedMakes.includes(w)) excludedMakes.push(w);
+      } else {
+        if (!wantedMakes.includes(w)) wantedMakes.push(w);
+      }
+    }
+  }
+
   const searchKeywords = [
     "coche", "coches", "vehículo", "vehiculos", "car",
     "busco", "buscar", "quiero", "necesito", "hay",
     "opciones", "disponibles", "en venta", "segunda mano",
     "suv", "berlina", "utilitario", "familiar",
     "diésel", "diesel", "gasolina", "eléctrico", "hibrido", "híbrido",
-    "seat", "volkswagen", "vw", "renault", "peugeot", "toyota",
-    "bmw", "mercedes", "ford", "opel", "nissan", "hyundai", "kia",
-    "audi", "león", "leon", "ibiza", "golf", "clio", "corolla", "serie", "focus",
+    "león", "leon", "ibiza", "golf", "clio", "corolla", "serie", "focus",
     "puertas", "puerta",
     "descapotable", "cabrio", "cabriolet", "roadster", "spider", "coupé", "coupe",
-    "rojo", "negro", "blanco", "azul", "gris",
     "reventa", "revender", "oferton", "ofertones", "chollo", "chollos", "oportunidad", "daño", "dañado", "arreglar", "reparar",
+    ...KNOWN_BRANDS,
   ];
 
   const hasSearchIntent = searchKeywords.some((kw) => lower.includes(kw));
@@ -127,11 +154,10 @@ export function detectCarSearch(message: string): {
   const hasKPattern = /\d[\d.,]*\s*k\b/i.test(lower);
   const hasDoors = doors !== undefined;
   const hasColors = requestedColors.length > 0;
-  const hasModeloConocido = ["seat", "bmw", "audi", "león", "leon", "ibiza", "golf", "clio", "corolla", "focus", "toyota", "mercedes"].some((m) =>
-    lower.includes(m)
-  );
+  const hasExcluded = excludedMakes.length > 0;
+  const hasWanted = wantedMakes.length > 0;
 
-  let isSearch = hasSearchIntent || hasPriceOrYear || hasKPattern || hasModeloConocido || hasDoors || hasColors;
+  let isSearch = hasSearchIntent || hasPriceOrYear || hasKPattern || hasWanted || hasExcluded || hasDoors || hasColors;
   if (hasPriceOrYear && !hasSearchIntent) isSearch = true;
 
   if (!hasSearchIntent && !maxPrice && !hasKPattern && !hasDoors && !hasColors && /\b20\d{2}\b/.test(lower)) {
@@ -145,6 +171,8 @@ export function detectCarSearch(message: string): {
     minPrice,
     doors,
     colors: requestedColors.length > 0 ? requestedColors : undefined,
+    excludedMakes: excludedMakes.length > 0 ? excludedMakes : undefined,
+    wantedMakes: wantedMakes.length > 0 ? wantedMakes : undefined,
   };
 }
 

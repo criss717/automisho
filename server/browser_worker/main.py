@@ -71,14 +71,28 @@ def _strip_accents(text: str) -> str:
 def _clean_query_for_portal(query: str) -> str:
     """Reduce a natural-language query to portal-searchable keywords.
 
-    Lowercases, strips accents and NL noise words, keeps brand/model tokens
-    or words with >= 3 letters (max 4 tokens). Returns "" for generic
-    price-only searches so callers skip the keyword param entirely.
+    Lowercases, strips accents, detects negation tokens so excluded makes
+    (e.g. 'no opel', 'ni peugeot') are NEVER returned as search keywords,
+    and returns brand/model tokens or empty string for generic price searches.
     """
     if not query:
         return ""
     words = re.sub(r"[^\w\s]", " ", _strip_accents(query.lower())).split()
-    meaningful = [w for w in words if w not in _PORTAL_NOISE and len(w) >= 3]
+    negation_tokens = {"no", "ni", "sin", "menos", "excepto", "descartar", "descarto", "fuera"}
+
+    # Identify excluded tokens
+    excluded: set[str] = set()
+    for i, w in enumerate(words):
+        if w in _KNOWN_MAKES_MODELS:
+            prev1 = words[i - 1] if i > 0 else ""
+            prev2 = words[i - 2] if i > 1 else ""
+            if prev1 in negation_tokens or prev2 in negation_tokens:
+                excluded.add(w)
+
+    meaningful = [
+        w for w in words
+        if w not in _PORTAL_NOISE and w not in excluded and len(w) >= 3
+    ]
     brands = [w for w in meaningful if w in _KNOWN_MAKES_MODELS]
     kept = brands if brands else meaningful
     return " ".join(kept[:4])
@@ -173,7 +187,8 @@ EXTRACT_LISTINGS_JS = """() => {
     const img = art.querySelector('img[src*="http"]');
     if (img) imageUrl = img.src;
 
-    out.push({ title: title.slice(0, 160), url: link, price: price ? String(price) : null, image_url: imageUrl });
+    const fullText = (art.innerText || '').replace(/\\s+/g, ' ').trim().slice(0, 800);
+    out.push({ title: title.slice(0, 160), url: link, price: price ? String(price) : null, image_url: imageUrl, description: fullText });
     seen.add(link);
   }
   if (out.length > 0) return out;
@@ -199,7 +214,8 @@ EXTRACT_LISTINGS_JS = """() => {
     const img = card.querySelector('img[src*="http"]');
     if (img) imageUrl = img.src;
 
-    out.push({ title: title.slice(0, 160), url: link, price: priceText ? priceText.slice(0, 50) : null, image_url: imageUrl });
+    const fullText = (card.innerText || '').replace(/\\s+/g, ' ').trim().slice(0, 800);
+    out.push({ title: title.slice(0, 160), url: link, price: priceText ? priceText.slice(0, 50) : null, image_url: imageUrl, description: fullText });
     seen.add(link);
   }
   if (out.length > 0) return out;
@@ -223,7 +239,8 @@ EXTRACT_LISTINGS_JS = """() => {
     const img = card.querySelector('img[src*="http"]');
     if (img) imageUrl = img.src;
 
-    out.push({ title: title.slice(0, 160), url: link, price: price, image_url: imageUrl });
+    const fullText = (card.innerText || '').replace(/\\s+/g, ' ').trim().slice(0, 800);
+    out.push({ title: title.slice(0, 160), url: link, price: price, image_url: imageUrl, description: fullText });
     seen.add(link);
   }
   if (out.length > 0) return out;
@@ -256,7 +273,7 @@ EXTRACT_LISTINGS_JS = """() => {
       imageUrl = img.src;
     }
 
-    out.push({ title: title.slice(0, 160), url: link, image_url: imageUrl, price: priceMatch[0] });
+    out.push({ title: title.slice(0, 160), url: link, image_url: imageUrl, price: priceMatch[0], description: cardText.slice(0, 800) });
     seen.add(link);
   }
   return out;
@@ -399,7 +416,7 @@ class SearchRequest(BaseModel):
     max_price: Optional[int] = None
     min_price: Optional[int] = None
     doors: Optional[int] = None
-    sources: Optional[List[str]] = ["coches_net", "autoscout24", "wallapop"]
+    sources: Optional[List[str]] = ["coches_net", "milanuncios", "wallapop", "autoscout24"]
 
 
 class InspectRequest(BaseModel):
@@ -414,6 +431,7 @@ class CarItem(BaseModel):
     source: str
     url: str
     image_url: Optional[str] = None
+    description: Optional[str] = None
 
 
 class InspectResult(BaseModel):
@@ -536,6 +554,7 @@ async def _scrape_source(
                         source=source,
                         url=entry.get("url", ""),
                         image_url=image_url if image_url and image_url.startswith("http") else None,
+                        description=entry.get("description"),
                     )
                 )
                 if len(items) >= MAX_RESULTS_PER_SOURCE:

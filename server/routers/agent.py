@@ -200,7 +200,10 @@ async def run_agent_chat(req: AgentChatRequest):
             "Eres AutoMisho v2, un Agente Autónomo experto en compraventa y negociación de coches en España. "
             "Tienes herramientas para buscar coches con navegador Chromium en tiempo real ('search_cars'), "
             "inspeccionar anuncios oficiales ('inspect_listing'), consultar DGT ('dgt_lookup') y hacer contraofertas ('send_offer_email'). "
-            "Usa tus herramientas cuando el usuario te pida buscar o auditar vehículos. "
+            "REGLAS OBLIGATORIAS:\n"
+            "1. Llama a 'search_cars' como MÁXIMO UNA VEZ por turno de conversación para no saturar al usuario ni exceder el tiempo de respuesta.\n"
+            "2. Respeta estrictamente cualquier exclusión de marcas que indique el usuario (ej: si dice 'no peugeot', NO busques peugeot).\n"
+            "3. Respeta estrictamente el presupuesto máximo acordado en la conversación (max_price).\n"
             "Sé conciso, técnico y protector del comprador."
         )
     }
@@ -218,11 +221,18 @@ async def run_agent_chat(req: AgentChatRequest):
         discovered_cars = []
         staged_action = None
 
-        # Check if the model called any tools
+        # Check if the model called any tools (limit to 1 search_cars call to avoid timeout)
+        search_executed = False
         if agent_res.tool_calls:
             for call in agent_res.tool_calls:
                 fn = call.get("function", {})
                 tool_name = fn.get("name")
+                if tool_name == "search_cars":
+                    if search_executed:
+                        logger.info("[AgentLoop] Skipping redundant search_cars call in same turn")
+                        continue
+                    search_executed = True
+
                 try:
                     args = json.loads(fn.get("arguments", "{}"))
                 except Exception:
