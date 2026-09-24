@@ -37,6 +37,9 @@ services:
     ports:
       - "3001:3000"
     restart: unless-stopped
+    dns:
+      - 8.8.8.8
+      - 1.1.1.1
     networks:
       - automisho-internal
 
@@ -61,6 +64,9 @@ services:
       - automisho-redis
       - automisho-browser
     restart: unless-stopped
+    dns:
+      - 8.8.8.8
+      - 1.1.1.1
     networks:
       - automisho-internal
 
@@ -85,6 +91,9 @@ services:
     depends_on:
       - automisho-orchestrator
     restart: unless-stopped
+    dns:
+      - 8.8.8.8
+      - 1.1.1.1
     networks:
       - automisho-internal
 

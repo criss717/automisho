@@ -111,27 +111,51 @@ export function detectCarSearch(message: string): {
 
   // Detect wanted and excluded makes with negation awareness
   const KNOWN_BRANDS = [
-    "seat", "volkswagen", "vw", "renault", "peugeot", "pegout", "toyota",
+    "seat", "volkswagen", "vw", "renault", "peugeot", "pegout", "pegeot", "toyota",
     "bmw", "mercedes", "ford", "opel", "nissan", "hyundai", "kia", "audi",
     "skoda", "fiat", "citroen", "dacia", "mazda", "honda", "volvo", "alfa",
     "chevrolet", "lancia", "mitsubishi", "suzuki", "subaru"
   ];
   const words = lower.replace(/[^\w\s]/g, " ").split(/\s+/);
-  const negationTokens = new Set(["no", "ni", "sin", "menos", "excepto", "descartar", "descarto", "fuera"]);
+  const negationTokens = new Set(["no", "ni", "sin", "menos", "excepto", "descartar", "descarto", "fuera", "nada"]);
   const excludedMakes: string[] = [];
   const wantedMakes: string[] = [];
 
+  // 1. Clause-level negation detection (e.g. "no sean de la marca opel ni peugeot ni chevrolet")
+  const negClauseRegex = /(?:no|ni|sin|menos|excepto|descartar|descarto|fuera|nada\s+de)\s+(?:quiero\s+)?(?:que\s+sean?\s+)?(?:de\s+la\s+marca\s+|marca\s+|marcas\s+|coches?\s+)?([a-z0-9\s,]+?)(?:\.|$|y\s+solo|con\s+presupuesto|minimo|maximo)/gi;
+  let clauseMatch: RegExpExecArray | null;
+  while ((clauseMatch = negClauseRegex.exec(lower)) !== null) {
+    const clauseTokens = clauseMatch[1].split(/\s+/);
+    for (let t of clauseTokens) {
+      if (t === "pegout" || t === "pegeot") t = "peugeot";
+      if (t === "chebrolet") t = "chevrolet";
+      if (KNOWN_BRANDS.includes(t) && !excludedMakes.includes(t)) {
+        excludedMakes.push(t);
+      }
+    }
+  }
+
+  // 2. Token-level scan
   for (let i = 0; i < words.length; i++) {
     let w = words[i];
-    if (w === "pegout") w = "peugeot";
+    if (w === "pegout" || w === "pegeot") w = "peugeot";
+    if (w === "chebrolet") w = "chevrolet";
     if (KNOWN_BRANDS.includes(w)) {
       const prev1 = i > 0 ? words[i - 1] : "";
       const prev2 = i > 1 ? words[i - 2] : "";
-      const isNeg = negationTokens.has(prev1) || negationTokens.has(prev2);
+      const prev3 = i > 2 ? words[i - 3] : "";
+      const prev4 = i > 3 ? words[i - 4] : "";
+      const isNeg =
+        excludedMakes.includes(w) ||
+        negationTokens.has(prev1) ||
+        negationTokens.has(prev2) ||
+        negationTokens.has(prev3) ||
+        negationTokens.has(prev4);
+
       if (isNeg) {
         if (!excludedMakes.includes(w)) excludedMakes.push(w);
       } else {
-        if (!wantedMakes.includes(w)) wantedMakes.push(w);
+        if (!wantedMakes.includes(w) && !excludedMakes.includes(w)) wantedMakes.push(w);
       }
     }
   }

@@ -28,11 +28,6 @@ async def _scrape_via_browser_worker(req: ScrapeRequest) -> list[CarResult] | No
     Returns a list of CarResult on success, None on any failure or
     empty result so the caller falls back to the httpx flow.
     Never raises, never fabricates listings.
-
-    NOTE: NL query cleaning lives in ONE place — the worker
-    (`_clean_query_for_portal` in server/browser_worker/main.py). This
-    function sends the raw query + min/max price and lets the worker
-    build per-portal URLs.
     """
     sources = _map_sources_for_browser(req.source)
     try:
@@ -41,9 +36,12 @@ async def _scrape_via_browser_worker(req: ScrapeRequest) -> list[CarResult] | No
                 f"{BROWSER_SERVICE_URL}/scrape/search",
                 json={
                     "query": req.query,
+                    "makes": req.makes,
+                    "excluded_makes": req.excluded_makes,
                     "max_price": req.max_price,
                     "min_price": req.min_price,
                     "doors": req.doors,
+                    "body_type": req.body_type,
                     "sources": sources,
                 },
             )
@@ -94,11 +92,14 @@ def _apply_post_filters(flat: list[CarResult], req: ScrapeRequest) -> list[CarRe
         flat = [c for c in flat if (c.price and c.price >= req.min_price * 0.95)]
 
     # Purge cars from excluded makes (e.g. 'no opel ni peugeot')
-    _, excluded_makes = _extract_makes_intent(req.query)
-    if excluded_makes:
+    all_excluded = set(req.excluded_makes or [])
+    _, query_excluded = _extract_makes_intent(req.query)
+    all_excluded.update(query_excluded)
+    if all_excluded:
+        norm_ex = [m.lower().strip() for m in all_excluded if m]
         flat = [
             c for c in flat
-            if not any(re.search(rf"\b{re.escape(ex)}\b", (c.title or "").lower()) for ex in excluded_makes)
+            if not any(re.search(rf"\b{re.escape(ex)}\b", (c.title or "").lower()) for ex in norm_ex)
         ]
 
     # Strict door count filter if requested
@@ -209,7 +210,8 @@ FIREFOX_HEADERS = {
 KNOWN_MAKES = {
     "seat", "volkswagen", "vw", "renault", "peugeot", "toyota", "bmw", "mercedes",
     "ford", "opel", "nissan", "hyundai", "kia", "audi", "skoda", "fiat", "citroen",
-    "dacia", "mazda", "honda", "volvo",
+    "dacia", "mazda", "honda", "volvo", "chevrolet", "alfa", "mitsubishi", "suzuki",
+    "subaru", "lancia",
     "leon", "ibiza", "golf", "clio", "corolla", "focus", "corsa", "fiesta", "c3", "208", "astra", "megane",
 }
 
@@ -245,29 +247,44 @@ def _extract_makes_intent(query: str) -> tuple[list[str], list[str]]:
     """Extract wanted and excluded makes from query text.
 
     Recognizes negative context like 'no opel', 'ni peugeot', 'menos renault',
-    'excepto seat', 'sin citroen', 'descartar bmw'.
+    'excepto seat', 'sin citroen', 'descartar bmw', 'que no sean de la marca opel'.
     Returns (wanted_makes, excluded_makes).
     """
     if not query:
         return [], []
-    words = re.sub(r"[^\w\s]", " ", query.lower()).split()
+    cleaned = re.sub(r"[^\w\s]", " ", query.lower())
+
+    # 1. Identify negated clauses
+    neg_clause_pattern = re.compile(
+        r"(?:no|ni|sin|menos|excepto|descartar|descarto|fuera|nada\s+de)\s+(?:quiero\s+)?(?:que\s+sean?\s+)?(?:de\s+la\s+marca\s+|marca\s+|marcas\s+|coches?\s+)?([a-z0-9\s,]+?)(?:\.|$|y\s+solo|con\s+presupuesto|minimo|maximo)",
+        re.IGNORECASE,
+    )
+    excluded = set()
+    for match in neg_clause_pattern.finditer(cleaned):
+        clause_toks = match.group(1).split()
+        for t in clause_toks:
+            t = "peugeot" if t in ("pegout", "pegeot") else t
+            t = "chevrolet" if t == "chebrolet" else t
+            if t in KNOWN_MAKES:
+                excluded.add(t)
+
+    words = cleaned.split()
     negation_tokens = {"no", "ni", "sin", "menos", "excepto", "descartar", "descarto", "fuera"}
     wanted: list[str] = []
-    excluded: list[str] = []
 
     for i, w in enumerate(words):
+        w = "peugeot" if w in ("pegout", "pegeot") else w
+        w = "chevrolet" if w == "chebrolet" else w
         if w in KNOWN_MAKES:
-            # Check if any of the preceding 1..2 tokens is a negation
             prev1 = words[i - 1] if i > 0 else ""
             prev2 = words[i - 2] if i > 1 else ""
-            if prev1 in negation_tokens or prev2 in negation_tokens:
-                if w not in excluded:
-                    excluded.append(w)
+            if prev1 in negation_tokens or prev2 in negation_tokens or w in excluded:
+                excluded.add(w)
             else:
-                if w not in wanted:
+                if w not in wanted and w not in excluded:
                     wanted.append(w)
 
-    return wanted, excluded
+    return [w for w in wanted if w not in excluded], list(excluded)
 
 
 def _has_known_make(text: str) -> bool:
@@ -338,24 +355,24 @@ async def scrape_cars(req: ScrapeRequest):
             req.doors = int(m_doors.group(1))
             logger.info(f"[scrape] Auto-detected doors requirement: {req.doors} from query '{req.query}'")
 
-    # Prefer the real Playwright browser worker; fall back to httpx below.
+    # Prefer the real Playwright browser worker; fall back or supplement with httpx below.
     browser_results = await _scrape_via_browser_worker(req)
+    browser_sliced: list[CarResult] = []
     if browser_results:
-        sliced = _apply_post_filters(browser_results, req)
-        if sliced:
-            logger.info(f"[scrape] browser worker aggregated {len(sliced)}/{len(browser_results)}")
+        browser_sliced = _apply_post_filters(browser_results, req)
+        if len(browser_sliced) >= 6:
+            logger.info(f"[scrape] browser worker aggregated {len(browser_sliced)}/{len(browser_results)}")
             return ScrapeResponse(
-                results=sliced,
+                results=browser_sliced,
                 source="browser",
                 query=req.query,
-                total=len(sliced),
+                total=len(browser_sliced),
             )
         logger.warning(
-            f"[scrape] browser worker results filtered to zero "
-            f"({len(browser_results)} before filters); falling back to httpx flow."
+            f"[scrape] browser worker results low ({len(browser_sliced)}/{len(browser_results)}); supplementing with httpx flow."
         )
 
-    if req.source in ("auto", "deep"):
+    if req.source in ("auto", "deep") or browser_sliced:
         tasks = [
             _scrape_with_retry(_scrape_autoscout24, req),
             _scrape_with_retry(_scrape_cochesnet, req),
@@ -363,7 +380,7 @@ async def scrape_cars(req: ScrapeRequest):
             _scrape_with_retry(_scrape_milanuncios, req),
         ]
         results = await asyncio.gather(*tasks, return_exceptions=True)
-        flat: list[CarResult] = []
+        flat: list[CarResult] = list(browser_sliced)
         for r in results:
             if isinstance(r, list):
                 flat.extend(r)

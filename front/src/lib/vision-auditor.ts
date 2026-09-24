@@ -20,14 +20,18 @@ export async function auditSingleCarImage(
   options?: VisionAuditOptions | number
 ): Promise<VisualAudit | null> {
   if (!imageUrl || !imageUrl.startsWith("http")) return null;
+  const lowerUrl = imageUrl.toLowerCase();
+  if (lowerUrl.includes(".svg") || lowerUrl.includes("logo") || lowerUrl.includes("placeholder")) {
+    return null;
+  }
 
   const opts: VisionAuditOptions =
     typeof options === "number" ? { requestedDoors: options } : options || {};
 
   try {
-    // 1. Fetch the image buffer with strict 8s timeout
+    // 1. Fetch the image buffer with 12s timeout
     const fetchController = new AbortController();
-    const fetchTimeout = setTimeout(() => fetchController.abort(), 8000);
+    const fetchTimeout = setTimeout(() => fetchController.abort(), 12000);
 
     const imgRes = await fetch(imageUrl, {
       signal: fetchController.signal,
@@ -39,7 +43,12 @@ export async function auditSingleCarImage(
     clearTimeout(fetchTimeout);
 
     if (!imgRes.ok) return null;
-    const contentType = imgRes.headers.get("content-type") || "image/jpeg";
+    const rawContentType = (imgRes.headers.get("content-type") || "image/jpeg").toLowerCase();
+    if (rawContentType.includes("svg") || rawContentType.includes("html") || rawContentType.includes("xml")) {
+      return null;
+    }
+    const supportedTypes = ["image/jpeg", "image/png", "image/gif", "image/webp"];
+    const contentType = supportedTypes.find((t) => rawContentType.includes(t.replace("image/", ""))) || "image/jpeg";
     const arrayBuf = await imgRes.arrayBuffer();
     const buffer = Buffer.from(arrayBuf);
 
@@ -102,7 +111,7 @@ Responde ÚNICAMENTE un JSON válido con este formato:
               ],
             },
           ],
-          abortSignal: AbortSignal.timeout(20000),
+          abortSignal: AbortSignal.timeout(35000),
         });
         responseText = result.text;
       } catch (visionErr) {
@@ -186,9 +195,9 @@ export async function auditCarVisuals(
     typeof options === "number" ? { requestedDoors: options } : options || {};
   const requestedDoors = opts.requestedDoors;
 
-  // Dynamically audit enough candidates to satisfy requested count (default up to 12)
-  const targetCount = opts.targetCount || 10;
-  const auditBudget = Math.min(cars.length, Math.max(8, targetCount + 3));
+  // Dynamically audit enough candidates to satisfy requested count (default 6-8)
+  const targetCount = opts.targetCount || 6;
+  const auditBudget = Math.min(cars.length, Math.max(5, targetCount));
   const candidatePool = cars.slice(0, auditBudget);
   const remainingCars = cars.slice(auditBudget);
 
@@ -261,7 +270,7 @@ export async function auditCarVisuals(
     return enrichedCar;
   };
 
-  const settled = await auditInBatches(candidatePool, auditOne, 3);
+  const settled = await auditInBatches(candidatePool, auditOne, 2);
   const auditedPool = settled.map((res, i) => (res.status === "fulfilled" ? res.value : candidatePool[i]));
 
   // Re-sort: cars matching user criteria first, then by score

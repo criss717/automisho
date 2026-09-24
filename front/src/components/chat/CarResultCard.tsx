@@ -71,6 +71,12 @@ export default function CarResultCard({
   const images = ensureCarGallery(car, rawImages);
   const [activeImgIndex, setActiveImgIndex] = useState(0);
 
+  const hasVideo = Boolean(
+    (car.description && /vídeo|video|recorrido\s+virtual/i.test(car.description)) ||
+    (car.url && /video/i.test(car.url)) ||
+    (car.image_url && /poster|video/i.test(car.image_url))
+  );
+
   const handlePrevImage = (e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
@@ -119,6 +125,7 @@ export default function CarResultCard({
             <img
               src={images[0]}
               alt={car.title}
+              referrerPolicy="no-referrer"
               className="w-16 h-16 rounded-lg object-cover bg-linen shrink-0 border border-mist"
               onError={(e) => {
                 (e.target as HTMLImageElement).src = "/assets/hero_logo.svg";
@@ -192,6 +199,7 @@ export default function CarResultCard({
               transition={{ duration: 0.2 }}
               className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
               loading="lazy"
+              referrerPolicy="no-referrer"
               onError={(e) => {
                 (e.target as HTMLImageElement).src = "/assets/hero_logo.svg";
                 (e.target as HTMLImageElement).className = "w-16 h-16 mx-auto my-14 object-contain opacity-50";
@@ -264,6 +272,11 @@ export default function CarResultCard({
           <span className="text-[11px] font-medium tracking-wide uppercase px-2.5 py-1 rounded-full bg-paper/95 text-graphite border border-mist shadow-sm">
             {car.source}
           </span>
+          {hasVideo && (
+            <span className="text-[10px] font-medium tracking-wide px-2 py-0.5 rounded-full bg-paper/95 text-signal-blue border border-signal-blue/50 shadow-sm flex items-center gap-1">
+              ▶ Video
+            </span>
+          )}
           {car.visualAudit?.verified3p && (
             <span className="text-[10px] font-medium tracking-wide px-2 py-0.5 rounded-full bg-paper/95 text-signal-blue border border-signal-blue/50 shadow-sm flex items-center gap-1">
               👁️ 3p Verificado

@@ -5,6 +5,7 @@ import os
 import httpx
 import logging
 import json
+import re
 
 from services.model_gateway import ModelGateway, ModelTier
 from services.sentinel import SentinelToolGateway, ToolClassification, SecurityPolicyException
@@ -26,34 +27,78 @@ sentinel = SentinelToolGateway(secret_key=SENTINEL_SECRET)
 # --- 1. Define Tool Handlers ---
 
 async def tool_search_cars(
-    query: str,
+    query: Optional[str] = "",
+    makes: Optional[List[str]] = None,
+    excluded_makes: Optional[List[str]] = None,
     max_price: Optional[int] = None,
     min_price: Optional[int] = None,
     doors: Optional[int] = None,
+    body_type: Optional[str] = None,
     sources: Optional[List[str]] = None,
 ) -> List[Dict[str, Any]]:
     """Calls the isolated browser worker to scrape cars using Playwright/Chromium."""
-    logger.info(f"[Tool:search_cars] Executing via Browser Worker at {BROWSER_SERVICE_URL} query='{query}' max_price={max_price} doors={doors}")
+    logger.info(
+        f"[Tool:search_cars] Executing via Browser Worker query='{query}' "
+        f"makes={makes} excluded_makes={excluded_makes} max_price={max_price} doors={doors} body_type={body_type}"
+    )
+    payload = {
+        "query": query or "",
+        "makes": makes or [],
+        "excluded_makes": excluded_makes or [],
+        "max_price": max_price,
+        "min_price": min_price,
+        "doors": doors,
+        "body_type": body_type,
+        "sources": sources or ["coches_net", "autoscout24", "wallapop", "milanuncios"],
+    }
+    raw_cars: List[Dict[str, Any]] = []
     try:
         async with httpx.AsyncClient(timeout=60.0) as client:
             resp = await client.post(
                 f"{BROWSER_SERVICE_URL}/scrape/search",
-                json={
-                    "query": query,
-                    "max_price": max_price,
-                    "min_price": min_price,
-                    "doors": doors,
-                    "sources": sources or ["coches_net", "autoscout24", "wallapop", "milanuncios"],
-                }
+                json=payload,
             )
             if resp.status_code == 200:
-                return resp.json()
+                raw_cars = resp.json() or []
     except Exception as e:
-        logger.warning(f"[Tool:search_cars] Browser worker unavailable or failed: {e}. Returning empty list.")
-        return []
+        logger.warning(f"[Tool:search_cars] Browser worker unavailable or failed: {e}. Trying fallback to scrape router.")
+        try:
+            from routers.scrape import scrape_cars
+            from models.schemas import ScrapeRequest
+            fallback_req = ScrapeRequest(
+                query=query or "",
+                source="auto",
+                max_price=max_price,
+                min_price=min_price,
+                doors=doors,
+                body_type=body_type,
+                makes=makes,
+                excluded_makes=excluded_makes,
+                max_results=20,
+            )
+            scraped = await scrape_cars(fallback_req)
+            raw_cars = [c.model_dump() for c in scraped.results]
+        except Exception as fb_err:
+            logger.warning(f"[Tool:search_cars] Fallback scrape also failed: fb_err={fb_err}")
+            return []
 
-    logger.warning("[Tool:search_cars] Browser worker returned non-200 or empty payload. Returning empty list.")
-    return []
+    # Strict post-filter in agent tool:
+    # 1. Purge any excluded makes (e.g. 'opel', 'peugeot')
+    if excluded_makes:
+        norm_ex = [m.lower().strip() for m in excluded_makes if m]
+        raw_cars = [
+            c for c in raw_cars
+            if not any(re.search(rf"\b{re.escape(ex)}\b", (c.get("title") or "").lower()) for ex in norm_ex)
+        ]
+
+    # 2. Strict max_price filter with 5% tolerance
+    if max_price:
+        raw_cars = [
+            c for c in raw_cars
+            if c.get("price") and float(c["price"]) <= max_price * 1.05
+        ]
+
+    return raw_cars
 
 async def tool_inspect_listing(url: str) -> Dict[str, Any]:
     """Inspects a specific listing using isolated Chromium."""
@@ -102,16 +147,52 @@ AGENT_TOOLS = [
         "type": "function",
         "function": {
             "name": "search_cars",
-            "description": "Busca vehículos de segunda mano en el mercado español (Coches.net, AutoScout24, Wallapop, Milanuncios) usando el navegador Chromium.",
+            "description": (
+                "Busca vehículos de segunda mano en el mercado español en tiempo real (Coches.net, AutoScout24, Wallapop, Milanuncios). "
+                "REGLAS ESTRICTAS DE LLAMADA:\n"
+                "- 'query': Debe contener ÚNICAMENTE marca y modelo concretos (ej: 'seat leon', 'golf') o dejarse vacío (\"\") si es una búsqueda abierta por requerimientos generales.\n"
+                "- NUNCA pongas adjetivos, potencia, frases ni negaciones en 'query' (ej: NO pongas 'coche barato', 'para viajes largos', '90cv', 'no opel'). Esto rompe la búsqueda en los portales.\n"
+                "- 'makes': Si el usuario quiere marcas específicas o sugieres marcas recomendables para su uso (ej: ['seat', 'ford', 'renault', 'volkswagen']), indícalas aquí.\n"
+                "- 'excluded_makes': Si el usuario descarta o prohíbe marcas (ej: 'no opel ni peugeot'), indícalas aquí (ej: ['opel', 'peugeot']). Se purgarán 100% de los resultados.\n"
+                "- 'max_price': Presupuesto tope en euros.\n"
+                "- 'min_price': Presupuesto mínimo en euros si fue indicado.\n"
+                "- 'doors': Número de puertas (ej: 3 o 5) si fue indicado.\n"
+                "- 'body_type': Carrocería ('berlina', 'familiar', 'compacto', 'suv', 'utilitario') si el usuario o caso de uso lo requiere."
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "query": {"type": "string", "description": "Marca y modelo o términos de búsqueda, ej: 'seat ibiza' o 'coche compacto'"},
-                    "max_price": {"type": "integer", "description": "Precio máximo en euros, ej: 3500"},
-                    "min_price": {"type": "integer", "description": "Precio mínimo en euros"},
-                    "doors": {"type": "integer", "description": "Número exacto de puertas (ej: 3 o 5)"}
-                },
-                "required": ["query"]
+                    "query": {
+                        "type": "string",
+                        "description": "Marca y modelo específicos (ej: 'seat ibiza') o vacío \"\" para búsqueda abierta."
+                    },
+                    "makes": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Marcas deseadas a buscar (ej: ['seat', 'renault', 'ford'])"
+                    },
+                    "excluded_makes": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Marcas que el usuario PROHIBIÓ o descartó (ej: ['opel', 'peugeot']). Quedarán 100% excluidas."
+                    },
+                    "max_price": {
+                        "type": "integer",
+                        "description": "Precio máximo en euros, ej: 3500"
+                    },
+                    "min_price": {
+                        "type": "integer",
+                        "description": "Precio mínimo en euros"
+                    },
+                    "doors": {
+                        "type": "integer",
+                        "description": "Número exacto de puertas (ej: 3 o 5)"
+                    },
+                    "body_type": {
+                        "type": "string",
+                        "description": "Tipo de carrocería (ej: 'berlina', 'familiar', 'compacto', 'suv', 'utilitario')"
+                    }
+                }
             }
         }
     },
@@ -199,12 +280,15 @@ async def run_agent_chat(req: AgentChatRequest):
         "content": (
             "Eres AutoMisho v2, un Agente Autónomo experto en compraventa y negociación de coches en España. "
             "Tienes herramientas para buscar coches con navegador Chromium en tiempo real ('search_cars'), "
-            "inspeccionar anuncios oficiales ('inspect_listing'), consultar DGT ('dgt_lookup') y hacer contraofertas ('send_offer_email'). "
-            "REGLAS OBLIGATORIAS:\n"
-            "1. Llama a 'search_cars' como MÁXIMO UNA VEZ por turno de conversación para no saturar al usuario ni exceder el tiempo de respuesta.\n"
-            "2. Respeta estrictamente cualquier exclusión de marcas que indique el usuario (ej: si dice 'no peugeot', NO busques peugeot).\n"
-            "3. Respeta estrictamente el presupuesto máximo acordado en la conversación (max_price).\n"
-            "Sé conciso, técnico y protector del comprador."
+            "inspeccionar anuncios oficiales ('inspect_listing'), consultar DGT ('dgt_lookup') y hacer contraofertas ('send_offer_email').\n\n"
+            "REGLAS CRÍTICAS PARA BUSCAR COCHES:\n"
+            "1. Llama a 'search_cars' como MÁXIMO UNA VEZ por turno de conversación.\n"
+            "2. Clasifica siempre los requerimientos del usuario en los parámetros estructurados de 'search_cars':\n"
+            "   - 'excluded_makes': Si el usuario dice que NO quiere ciertas marcas (ej: 'no opel ni peugeot', 'descartar renault'), ponlas obligatoriamente en 'excluded_makes': ['opel', 'peugeot'].\n"
+            "   - 'query': Pon SOLO marca/modelo específicos o déjalo vacío (\"\"). NUNCA incluyas frases conversacionales como 'viajes largos', '90 cv', 'buen estado', 'no opel' dentro de 'query'.\n"
+            "   - Para objetivos genéricos como 'viajes largos', sugiere marcas fiables en 'makes' (ej: ['seat', 'volkswagen', 'ford', 'renault', 'skoda']) o usa 'body_type': 'berlina' / 'familiar' con 'query': \"\".\n"
+            "   - Pon siempre 'max_price' si el usuario indicó un presupuesto máximo.\n"
+            "3. Sé conciso, técnico y protector del comprador."
         )
     }
 

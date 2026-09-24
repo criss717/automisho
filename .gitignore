@@ -91,3 +91,5 @@ Thumbs.db
 # Project persistence & Context
 docs/
 contexto.md
+# Local Pi runtime state
+.atl/

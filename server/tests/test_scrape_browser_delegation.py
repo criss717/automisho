@@ -143,6 +143,33 @@ def test_clean_query_for_portal_strips_nl_noise():
     assert _clean_query_for_portal("coche 3 puertas gasolina") == ""
     # Brand/model tokens survive the cleaning.
     assert _clean_query_for_portal("busco seat ibiza barato menos 3000 euros") == "seat ibiza"
+    # Negated brands are never returned as search keywords
+    q_neg = "las 6 mejores opciones de menos de 3000€ que no sean de la marca opel ni pegout ni chevrolet"
+    assert _clean_query_for_portal(q_neg) == ""
+    assert _clean_query_for_portal("coche viajes largos diesel 90cv") == ""
+    # Explicit makes honored when not excluded
+    assert _clean_query_for_portal("", makes=["seat", "ford"], excluded_makes=["opel"]) == "seat"
+    assert _clean_query_for_portal("", makes=["opel", "renault"], excluded_makes=["opel"]) == "renault"
+
+
+def test_apply_post_filters_purges_excluded_makes():
+    from models.schemas import CarResult, ScrapeRequest
+
+    cars = [
+        CarResult(title="Opel Astra 1.6", price=2000, url="https://opel", source="coches_net"),
+        CarResult(title="Peugeot 207 1.4", price=2200, url="https://peugeot", source="coches_net"),
+        CarResult(title="SEAT León 1.9 TDI", price=2500, url="https://seat", source="coches_net"),
+    ]
+    req = ScrapeRequest(
+        query="coches baratos que no sean de la marca opel ni pegout",
+        source="standard",
+        max_results=10,
+        max_price=3000,
+        excluded_makes=["opel", "peugeot"],
+    )
+    out = _apply_post_filters(cars, req)
+    assert len(out) == 1
+    assert out[0].title == "SEAT León 1.9 TDI"
 
 
 def test_resolve_entry_price_prefers_direct_price():

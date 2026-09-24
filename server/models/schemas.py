@@ -3,7 +3,7 @@ from typing import Optional
 
 
 class ScrapeRequest(BaseModel):
-    query: str = Field(..., min_length=1, description="Search query (e.g., 'SEAT León diesel')")
+    query: str = Field(default="", description="Search query (e.g., 'SEAT León diesel')")
     source: str = Field(default="auto", description="Source: auto, autoscout24, cochesnet, wallapop")
     max_results: int = Field(default=10, ge=1, le=50)
     min_price: Optional[int] = Field(default=None, ge=0)
@@ -13,6 +13,8 @@ class ScrapeRequest(BaseModel):
     doors: Optional[int] = Field(default=None, ge=2, le=7, description="Number of doors (e.g. 3, 5)")
     body_type: Optional[str] = Field(default=None, description="Body type: cabrio, coupe, sedan, etc.")
     color: Optional[str] = Field(default=None, description="Color preference")
+    makes: Optional[list[str]] = Field(default=None, description="Target makes to search")
+    excluded_makes: Optional[list[str]] = Field(default=None, description="Makes to strictly exclude")
 
 
 class CarResult(BaseModel):

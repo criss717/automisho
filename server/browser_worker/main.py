@@ -30,7 +30,7 @@ except ImportError:
 
 CONCURRENCY_LIMIT = int(os.getenv("BROWSER_CONCURRENCY", "5"))
 NAV_TIMEOUT_MS = int(os.getenv("BROWSER_NAV_TIMEOUT_MS", "30000"))
-MAX_RESULTS_PER_SOURCE = int(os.getenv("BROWSER_MAX_RESULTS", "15"))
+MAX_RESULTS_PER_SOURCE = int(os.getenv("BROWSER_MAX_RESULTS", "25"))
 
 _pool_semaphore = asyncio.Semaphore(CONCURRENCY_LIMIT)
 _playwright = None
@@ -42,22 +42,35 @@ _browser = None
 _PORTAL_NOISE = {
     "hola", "dame", "dime", "busco", "busca", "quiero", "necesito",
     "mejores", "mejor", "buenos", "bueno", "buenas", "baratos", "barato",
-    "coches", "coche", "opciones", "opcion", "cinco", "tres", "cuatro",
+    "coches", "coche", "opciones", "opcion", "cinco", "tres", "cuatro", "seis", "siete", "ocho", "diez",
     "puertas", "puerta", "grises", "gris", "negros", "negro",
     "blancos", "blanco", "rojos", "rojo", "azules", "azul",
-    "menos", "mas", "que", "euros", "euro", "gasolina", "diesel",
+    "menos", "mas", "que", "euros", "euro", "gasolina", "diesel", "diésel",
     "segunda", "mano", "hay", "para", "con", "sin", "hasta", "sobre",
     "entre", "por", "de", "del", "un", "una", "el", "la", "los", "las",
     "y", "a", "al", "en", "mi", "mis", "solo", "ver", "pero", "ojo",
-    "porfa", "favor", "candidatos", "smejores",
+    "porfa", "favor", "candidatos", "smejores", "marca", "marcas",
+    "viaje", "viajes", "largo", "largos", "viajar", "cv", "potencia",
+    "minimo", "maximo", "fiable", "confiable", "economico", "ocasion", "estado",
 }
 
 _KNOWN_MAKES_MODELS = {
     "seat", "volkswagen", "vw", "renault", "peugeot", "toyota", "bmw",
     "mercedes", "ford", "opel", "nissan", "hyundai", "kia", "audi",
     "skoda", "fiat", "citroen", "dacia", "mazda", "honda", "volvo",
+    "chevrolet", "alfa", "mitsubishi", "suzuki", "subaru", "lancia",
     "leon", "ibiza", "golf", "clio", "corolla", "focus", "corsa",
-    "fiesta", "c3", "208", "astra", "megane",
+    "fiesta", "c3", "208", "astra", "megane", "insignia", "zafira",
+    "passat", "polo", "toledo", "mondeo", "laguna",
+}
+
+_TYPO_NORMALIZATIONS = {
+    "pegout": "peugeot",
+    "pegeot": "peugeot",
+    "chebrolet": "chevrolet",
+    "mercede": "mercedes",
+    "wolsvagen": "volkswagen",
+    "volksvagen": "volkswagen",
 }
 
 
@@ -68,34 +81,78 @@ def _strip_accents(text: str) -> str:
     )
 
 
-def _clean_query_for_portal(query: str) -> str:
-    """Reduce a natural-language query to portal-searchable keywords.
+def _extract_excluded_from_text(text: str) -> set[str]:
+    """Extract excluded makes from natural language negation clauses."""
+    excluded = set()
+    cleaned = _strip_accents(text.lower())
+    # Match clauses like "no sean de la marca opel", "no opel ni peugeot", "descartar peugeot"
+    neg_clause_pattern = re.compile(
+        r"(?:no|ni|sin|menos|excepto|descartar|descarto|fuera|nada\s+de)\s+(?:quiero\s+)?(?:que\s+sean?\s+)?(?:de\s+la\s+marca\s+|marca\s+|marcas\s+|coches?\s+)?([a-z0-9\s,]+?)(?:\.|$|y\s+solo|con\s+presupuesto|minimo|maximo)",
+        re.IGNORECASE
+    )
+    for match in neg_clause_pattern.finditer(cleaned):
+        clause = match.group(1)
+        tokens = re.sub(r"[^\w\s]", " ", clause).split()
+        for tok in tokens:
+            normalized = _TYPO_NORMALIZATIONS.get(tok, tok)
+            if normalized in _KNOWN_MAKES_MODELS:
+                excluded.add(normalized)
+    return excluded
 
-    Lowercases, strips accents, detects negation tokens so excluded makes
-    (e.g. 'no opel', 'ni peugeot') are NEVER returned as search keywords,
-    and returns brand/model tokens or empty string for generic price searches.
+
+def _clean_query_for_portal(
+    query: str,
+    makes: Optional[List[str]] = None,
+    excluded_makes: Optional[List[str]] = None,
+) -> str:
+    """Reduce query to portal-searchable keywords.
+
+    If positive makes are provided (or found in query), returns them (never returning excluded makes).
+    If no positive make is found (e.g., broad search by budget/power), returns empty string
+    so portals do price/filter searches without breaking on conversational keywords.
     """
+    excluded: set[str] = set()
+    if excluded_makes:
+        for em in excluded_makes:
+            n = _TYPO_NORMALIZATIONS.get(em.lower().strip(), em.lower().strip())
+            excluded.add(n)
+
+    if query:
+        excluded.update(_extract_excluded_from_text(query))
+
+    # 1. If explicit target makes provided, prioritize the first non-excluded make
+    if makes:
+        valid_makes = [
+            _TYPO_NORMALIZATIONS.get(m.lower().strip(), m.lower().strip())
+            for m in makes
+            if _TYPO_NORMALIZATIONS.get(m.lower().strip(), m.lower().strip()) not in excluded
+        ]
+        if valid_makes:
+            return valid_makes[0]
+
     if not query:
         return ""
+
     words = re.sub(r"[^\w\s]", " ", _strip_accents(query.lower())).split()
-    negation_tokens = {"no", "ni", "sin", "menos", "excepto", "descartar", "descarto", "fuera"}
+    normalized_words = [_TYPO_NORMALIZATIONS.get(w, w) for w in words]
 
-    # Identify excluded tokens
-    excluded: set[str] = set()
-    for i, w in enumerate(words):
-        if w in _KNOWN_MAKES_MODELS:
-            prev1 = words[i - 1] if i > 0 else ""
-            prev2 = words[i - 2] if i > 1 else ""
-            if prev1 in negation_tokens or prev2 in negation_tokens:
-                excluded.add(w)
+    # Find known makes or models that are NOT excluded
+    brands = [w for w in normalized_words if w in _KNOWN_MAKES_MODELS and w not in excluded]
+    if brands:
+        return " ".join(brands[:2])
 
+    # If query has specific technical model/brand terms not in noise or excluded
     meaningful = [
-        w for w in words
+        w for w in normalized_words
         if w not in _PORTAL_NOISE and w not in excluded and len(w) >= 3
     ]
-    brands = [w for w in meaningful if w in _KNOWN_MAKES_MODELS]
-    kept = brands if brands else meaningful
-    return " ".join(kept[:4])
+    # If meaningful words are purely adjectival/generic (not brand/model), return empty
+    # to avoid portal 0-results
+    brand_or_model = [w for w in meaningful if w in _KNOWN_MAKES_MODELS]
+    if brand_or_model:
+        return " ".join(brand_or_model[:2])
+
+    return ""
 
 
 def _build_portal_url(
@@ -138,13 +195,13 @@ def _build_portal_url(
             url += "?" + "&".join(params)
         return url
     if source == "wallapop":
-        url = "https://es.wallapop.com/app/search?filters_source=search_box"
+        url = "https://es.wallapop.com/search?category_id=100&filters_source=search_box"
         if q:
             url += f"&keywords={q}"
         if max_price is not None:
-            url += f"&max_price={max_price}"
+            url += f"&max_sale_price={max_price}"
         if min_price is not None:
-            url += f"&min_price={min_price}"
+            url += f"&min_sale_price={min_price}"
         return url
     if source == "milanuncios":
         base = "https://www.milanuncios.com/coches-de-segunda-mano/"
@@ -163,6 +220,58 @@ def _build_portal_url(
 EXTRACT_LISTINGS_JS = """() => {
   const out = [];
   const seen = new Set();
+
+  const extractCardImage = (card) => {
+    // 1. Check all img tags (including lazy loading attributes)
+    const imgs = card.querySelectorAll('img');
+    for (const img of imgs) {
+      const candidates = [
+        img.getAttribute('data-src'),
+        img.getAttribute('data-lazy-src'),
+        img.getAttribute('data-original'),
+        img.getAttribute('src'),
+      ];
+      for (const c of candidates) {
+        if (c && c.startsWith('http') && !c.includes('logo') && !c.includes('avatar') && !c.includes('icon') && !c.endsWith('.svg') && !c.includes('.svg?')) {
+          return c;
+        }
+      }
+      const srcset = img.getAttribute('srcset') || img.getAttribute('data-srcset');
+      if (srcset) {
+        const first = srcset.split(',')[0].trim().split(' ')[0];
+        if (first && first.startsWith('http') && !first.endsWith('.svg')) {
+          return first;
+        }
+      }
+    }
+    // 2. Check picture source tags
+    const sources = card.querySelectorAll('picture source[srcset]');
+    for (const s of sources) {
+      const srcset = s.getAttribute('srcset');
+      if (srcset) {
+        const first = srcset.split(',')[0].trim().split(' ')[0];
+        if (first && first.startsWith('http') && !first.endsWith('.svg')) {
+          return first;
+        }
+      }
+    }
+    // 3. Check video poster (when first media element is a video preview)
+    const video = card.querySelector('video[poster]');
+    if (video) {
+      const poster = video.getAttribute('poster');
+      if (poster && poster.startsWith('http')) return poster;
+    }
+    // 4. Check background-image
+    const bgEls = card.querySelectorAll('[style*="background-image"], [style*="background:"]');
+    for (const el of bgEls) {
+      const style = el.getAttribute('style') || '';
+      const match = style.match(/url\\(['"]?(https?:[^'")]+)['"]?\\)/i);
+      if (match && match[1] && !match[1].endsWith('.svg')) {
+        return match[1];
+      }
+    }
+    return null;
+  };
 
   // 1. AutoScout24 specific extraction
   const as24Articles = document.querySelectorAll('article.cldt-summary-full-item, article[data-testid="list-item"]');
@@ -183,10 +292,7 @@ EXTRACT_LISTINGS_JS = """() => {
       price = pEl ? pEl.innerText.trim() : null;
     }
 
-    let imageUrl = null;
-    const img = art.querySelector('img[src*="http"]');
-    if (img) imageUrl = img.src;
-
+    const imageUrl = extractCardImage(art);
     const fullText = (art.innerText || '').replace(/\\s+/g, ' ').trim().slice(0, 800);
     out.push({ title: title.slice(0, 160), url: link, price: price ? String(price) : null, image_url: imageUrl, description: fullText });
     seen.add(link);
@@ -210,10 +316,7 @@ EXTRACT_LISTINGS_JS = """() => {
     const priceEl = card.querySelector('[data-testid*="price"], [class*="price" i]');
     const priceText = priceEl ? priceEl.innerText.trim() : card.innerText;
 
-    let imageUrl = null;
-    const img = card.querySelector('img[src*="http"]');
-    if (img) imageUrl = img.src;
-
+    const imageUrl = extractCardImage(card);
     const fullText = (card.innerText || '').replace(/\\s+/g, ' ').trim().slice(0, 800);
     out.push({ title: title.slice(0, 160), url: link, price: priceText ? priceText.slice(0, 50) : null, image_url: imageUrl, description: fullText });
     seen.add(link);
@@ -235,10 +338,7 @@ EXTRACT_LISTINGS_JS = """() => {
     const priceMatch = card.innerText.match(/(\\d[\\d\\s\\.\\,]*\\s*€|€\\s*\\d[\\d\\s\\.\\,]*)/);
     const price = priceMatch ? priceMatch[0] : null;
 
-    let imageUrl = null;
-    const img = card.querySelector('img[src*="http"]');
-    if (img) imageUrl = img.src;
-
+    const imageUrl = extractCardImage(card);
     const fullText = (card.innerText || '').replace(/\\s+/g, ' ').trim().slice(0, 800);
     out.push({ title: title.slice(0, 160), url: link, price: price, image_url: imageUrl, description: fullText });
     seen.add(link);
@@ -267,12 +367,7 @@ EXTRACT_LISTINGS_JS = """() => {
     }
     if (title.length < 5) continue;
 
-    let imageUrl = null;
-    const img = card.querySelector('img[src*="http"]');
-    if (img && !img.src.includes('logo') && !img.src.includes('avatar') && !img.src.endsWith('.svg')) {
-      imageUrl = img.src;
-    }
-
+    const imageUrl = extractCardImage(card);
     out.push({ title: title.slice(0, 160), url: link, image_url: imageUrl, price: priceMatch[0], description: cardText.slice(0, 800) });
     seen.add(link);
   }
@@ -412,10 +507,13 @@ app = FastAPI(
 
 
 class SearchRequest(BaseModel):
-    query: str
+    query: Optional[str] = ""
+    makes: Optional[List[str]] = None
+    excluded_makes: Optional[List[str]] = None
     max_price: Optional[int] = None
     min_price: Optional[int] = None
     doors: Optional[int] = None
+    body_type: Optional[str] = None
     sources: Optional[List[str]] = ["coches_net", "milanuncios", "wallapop", "autoscout24"]
 
 
@@ -498,12 +596,14 @@ async def _scrape_source(
     max_price: Optional[int],
     min_price: Optional[int] = None,
     doors: Optional[int] = None,
+    makes: Optional[List[str]] = None,
+    excluded_makes: Optional[List[str]] = None,
 ) -> List[CarItem]:
     """Scrapes one portal. Returns real listings only; empty list on any failure."""
     if not _pool_active():
         logger.warning("[BrowserWorker] Chromium pool unavailable; skipping source '%s'.", source)
         return []
-    keywords = _clean_query_for_portal(query)
+    keywords = _clean_query_for_portal(query, makes=makes, excluded_makes=excluded_makes)
     url = _build_portal_url(source, keywords, max_price, min_price, doors)
     if not url:
         logger.warning("[BrowserWorker] Unknown source '%s'; skipping.", source)
@@ -514,16 +614,20 @@ async def _scrape_source(
         try:
             context, page = await _new_page()
             try:
-                try:
-                    await page.goto(url, wait_until="networkidle", timeout=NAV_TIMEOUT_MS)
-                except Exception:
-                    await page.goto(url, wait_until="domcontentloaded", timeout=NAV_TIMEOUT_MS)
-                await page.wait_for_timeout(2500)
+                await page.goto(url, wait_until="domcontentloaded", timeout=NAV_TIMEOUT_MS)
+                await page.wait_for_timeout(1000)
             except Exception as nav_err:
                 logger.warning(f"[BrowserWorker] Navigation failed for '{source}': {nav_err}")
                 return []
 
             await _dismiss_cookie_banner(page)
+            try:
+                await page.wait_for_selector(
+                    '.mt-CardAd, [data-testid*="card-ad"], article, [data-testid="list-item"], [data-testid="AD_CARD"], .item-card',
+                    timeout=5000
+                )
+            except Exception:
+                pass
             try:
                 for _ in range(3):
                     await page.keyboard.press("PageDown")
@@ -594,14 +698,46 @@ async def search_portal(req: SearchRequest):
     Executes in an isolated container with a bounded Chromium pool.
     Never returns fabricated listings: failures yield an empty list.
     """
-    logger.info(f"[BrowserWorker] Searching query='{req.query}' max_price={req.max_price} min_price={req.min_price} doors={req.doors}")
+    logger.info(
+        f"[BrowserWorker] Searching query='{req.query}' makes={req.makes} "
+        f"excluded_makes={req.excluded_makes} max_price={req.max_price} min_price={req.min_price} doors={req.doors}"
+    )
     sources = req.sources or []
     if not sources:
         return []
     per_source = await asyncio.gather(
-        *[_scrape_source(source, req.query, req.max_price, req.min_price, req.doors) for source in sources]
+        *[
+            _scrape_source(
+                source,
+                req.query or "",
+                req.max_price,
+                req.min_price,
+                req.doors,
+                makes=req.makes,
+                excluded_makes=req.excluded_makes,
+            )
+            for source in sources
+        ]
     )
     results: List[CarItem] = [item for group in per_source for item in group]
+
+    # Combine explicit excluded_makes and any negative clause from query
+    all_excluded = set()
+    if req.excluded_makes:
+        for em in req.excluded_makes:
+            all_excluded.add(_strip_accents(em.lower().strip()))
+    if req.query:
+        all_excluded.update(_extract_excluded_from_text(req.query))
+
+    if all_excluded:
+        results = [
+            c for c in results
+            if not any(re.search(rf"\b{re.escape(ex)}\b", c.title.lower()) for ex in all_excluded)
+        ]
+
+    if req.max_price:
+        results = [c for c in results if c.price <= req.max_price * 1.05]
+
     return results
 
 

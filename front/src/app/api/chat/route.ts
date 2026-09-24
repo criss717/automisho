@@ -22,7 +22,14 @@ import { detectVIN, detectPlate, detectCarSearch, enrichCarResult, isCarMatching
 
 import { lookupVehicleDgt } from "@/lib/dgt-client";
 
-async function searchBackend(query: string, maxPrice?: number, minPrice?: number, doors?: number) {
+async function searchBackend(
+  query: string,
+  maxPrice?: number,
+  minPrice?: number,
+  doors?: number,
+  excludedMakes?: string[],
+  makes?: string[]
+) {
   const controller = new AbortController();
   const timeoutMs = 85000;
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
@@ -37,6 +44,8 @@ async function searchBackend(query: string, maxPrice?: number, minPrice?: number
         max_price: maxPrice,
         min_price: minPrice,
         doors,
+        excluded_makes: excludedMakes,
+        makes,
       }),
       signal: controller.signal,
     });
@@ -153,13 +162,33 @@ export async function POST(req: Request) {
         if (search.doors === undefined && prevSearch.doors !== undefined) {
           search.doors = prevSearch.doors;
         }
-        // Inherit excluded makes (e.g. "no opel ni peugeot") across messages
+        // Inherit or un-exclude makes across messages
         if ((!search.excludedMakes || search.excludedMakes.length === 0) && prevSearch.excludedMakes && prevSearch.excludedMakes.length > 0) {
-          search.excludedMakes = prevSearch.excludedMakes;
+          search.excludedMakes = [...prevSearch.excludedMakes];
         }
-        // Inherit colors unless user explicitly says "cualquier color" or "sin preferencia de color"
+        // If user explicitly asks to add or re-include a brand (e.g. "sumamos peugeot", "incluye peugeot", "peugeot también")
+        const unexcludePattern = /(?:sum(?:a|ar|amos)|inclu(?:ye|ir|imos)|pon(?:er)?|dej(?:a|ar|amos)|vuelve\s+a\s+meter|tambi[eé]n)\s+(?:a\s+)?(?:la\s+marca\s+)?([a-z]+)/i;
+        const unexMatch = userText.match(unexcludePattern);
+        if (unexMatch) {
+          let unexBrand = unexMatch[1].toLowerCase();
+          if (unexBrand === "pegout") unexBrand = "peugeot";
+          if (unexBrand === "chebrolet") unexBrand = "chevrolet";
+          if (search.excludedMakes) {
+            search.excludedMakes = search.excludedMakes.filter((b) => b !== unexBrand);
+          }
+          if (!search.wantedMakes) search.wantedMakes = [];
+          if (!search.wantedMakes.includes(unexBrand)) {
+            search.wantedMakes.push(unexBrand);
+          }
+        }
+
+        // Inherit or additively merge colors (e.g. "sumamos el rojo" -> ["blanco", "negro", "rojo"])
         const resetColorIntent = /(?:cualquier|todos? los?|da igual el|sin preferencia de)\s*colou?r(?:es)?/i.test(userText);
-        if (!resetColorIntent && (!search.colors || search.colors.length === 0) && prevSearch.colors && prevSearch.colors.length > 0) {
+        const isAdditiveColor = /(?:sum(?:a|ar|amos)|agreg(?:a|ar|amos)|tambi[eé]n|inclu(?:ye|ir|imos)|y\s+(?:el|los|color)?)\s*(?:color|colores|rojo|blanco|negro|azul|gris|verde|amarillo)/i.test(userText);
+
+        if (isAdditiveColor && search.colors && search.colors.length > 0 && prevSearch.colors && prevSearch.colors.length > 0) {
+          search.colors = Array.from(new Set([...prevSearch.colors, ...search.colors]));
+        } else if (!resetColorIntent && (!search.colors || search.colors.length === 0) && prevSearch.colors && prevSearch.colors.length > 0) {
           search.colors = prevSearch.colors;
         }
         if (prevSearch.isSearch) {
@@ -196,11 +225,13 @@ export async function POST(req: Request) {
     }
 
     if (search.isSearch) {
-      // Agent and direct scrape run in parallel; prefer the agent when it
-      // returns non-empty cars, else fall back to scrape, else null.
+      // Build clean query: only positive makes or empty string (never conversational prose)
+      const cleanScrapeQuery = search.wantedMakes && search.wantedMakes.length > 0 ? search.wantedMakes.join(" ") : "";
+
+      // Agent is primary; scrape backend runs as safe structured fallback
       const [agentSettled, scrapeSettled] = await Promise.allSettled([
         agentSearchBackend(userText, search.maxPrice),
-        searchBackend(search.query, search.maxPrice, search.minPrice, search.doors),
+        searchBackend(cleanScrapeQuery, search.maxPrice, search.minPrice, search.doors, search.excludedMakes, search.wantedMakes),
       ]);
       const agentResults =
         agentSettled.status === "fulfilled" ? agentSettled.value : null;
