@@ -197,10 +197,10 @@ export async function auditCarVisuals(
   const opts: VisionAuditOptions =
     typeof options === "number" ? { requestedDoors: options } : options || {};
   const requestedDoors = opts.requestedDoors;
-  const targetCount = opts.targetCount || 6;
+  const targetCount = opts.targetCount || 8;
 
-  // Maximum total audits allowed to prevent unbounded latency
-  const maxAudits = Math.min(cars.length, Math.max(targetCount * 2, targetCount + 4));
+  // Maximum total audits allowed to prevent unbounded latency (~50-60s max with 3 concurrent workers)
+  const maxAudits = Math.min(cars.length, Math.max(targetCount * 2, targetCount + 6));
 
   const validCandidates: CarResult[] = [];
   const unauditedCandidates: CarResult[] = [];
@@ -323,10 +323,10 @@ export async function auditCarVisuals(
     return enrichedCar;
   };
 
-  // Loop in batches of 2 until we reach targetCount valid cars or hit maxAudits
-  const batchSize = 2;
+  // Loop in batches of 3 concurrent calls until we reach targetCount valid cars or hit maxAudits
+  const batchSize = 3;
   while (validCandidates.length < targetCount && pendingPool.length > 0 && auditsPerformed < maxAudits) {
-    const toAuditCount = Math.min(batchSize, targetCount - validCandidates.length, pendingPool.length);
+    const toAuditCount = Math.min(batchSize, pendingPool.length);
     const currentBatch = pendingPool.splice(0, toAuditCount);
     auditsPerformed += currentBatch.length;
 

@@ -267,7 +267,29 @@ export function isCarMatchingDoors(title: string, url: string = "", requestedDoo
   return true;
 }
 
-export function enrichCarResult(car: Record<string, unknown>, requestedMaxPrice?: number, requestedDoors?: number): CarResult {
+export interface EnrichCarOptions {
+  maxPrice?: number;
+  doors?: number;
+  bodyType?: string | null;
+  fuel?: string | null;
+  minCv?: number | null;
+  purpose?: string | null;
+  colors?: string[];
+  wantedMakes?: string[];
+}
+
+export function enrichCarResult(
+  car: Record<string, unknown>,
+  optionsOrMaxPrice?: EnrichCarOptions | number,
+  requestedDoors?: number
+): CarResult {
+  const opts: EnrichCarOptions =
+    typeof optionsOrMaxPrice === "number"
+      ? { maxPrice: optionsOrMaxPrice, doors: requestedDoors }
+      : optionsOrMaxPrice || {};
+
+  const requestedMaxPrice = opts.maxPrice;
+  const doors = opts.doors;
   const price = typeof car.price === "number" ? car.price : (parseInt(String(car.price || "0").replace(/[^\d]/g, ""), 10) || 0);
   const year = car.year ? (typeof car.year === "number" ? car.year : parseInt(String(car.year), 10) || null) : null;
   const km = car.km ? (typeof car.km === "number" ? car.km : parseInt(String(car.km).replace(/[^\d]/g, ""), 10) || null) : null;
@@ -296,14 +318,14 @@ export function enrichCarResult(car: Record<string, unknown>, requestedMaxPrice?
     pros.push(`Precio competitivo en el mercado actual`);
   }
 
-  if (requestedDoors !== undefined) {
+  if (doors !== undefined) {
     const fullText = `${title} ${url || ""}`.toLowerCase();
-    const matches = isCarMatchingDoors(title, url, requestedDoors);
+    const matches = isCarMatchingDoors(title, url, doors);
     if (!matches) {
       score -= 50;
-      cons.push(`No cumple tu requisito de ${requestedDoors} puertas`);
+      cons.push(`No cumple tu requisito de ${doors} puertas`);
     } else {
-      if (requestedDoors === 3) {
+      if (doors === 3) {
         const isExplicit3 = /\b3p\b|\b3\s*puertas?|3p-|coupe|coupé/i.test(fullText);
         if (isExplicit3) {
           score += 8;
@@ -311,8 +333,136 @@ export function enrichCarResult(car: Record<string, unknown>, requestedMaxPrice?
         }
       } else {
         score += 5;
-        pros.push(`Carrocería de ${requestedDoors} puertas`);
+        pros.push(`Carrocería de ${doors} puertas`);
       }
+    }
+  }
+
+  // 1. Multicriteria: Body Type Alignment
+  if (opts.bodyType) {
+    const bLower = opts.bodyType.toLowerCase().trim();
+    const fullText = `${title} ${url || ""}`.toLowerCase();
+
+    if (bLower === "suv" || bLower === "todocamino" || bLower === "4x4") {
+      const isSuv = /\b(?:suv|4x4|todocamino|crossover|captur|kadjar|koleos|duster|tiguan|touareg|t-roc|t-cross|qashqai|juke|x-trail|ateca|arona|tarraco|kuga|ecosport|puma|tucson|santa fe|sportage|sorento|rav4|cr-v|cx-[35]|cross|alltrack|allroad)\b/i.test(fullText);
+      const isNonSuv = /\b(?:clio|twingo|twizy|polo|ibiza|fiesta|corsa|c3|208|yaris|micra|fabia|seicento|smart|coupe|coupé|cabrio)\b/i.test(fullText);
+      if (isSuv) {
+        score += 15;
+        pros.push("Carrocería SUV/todocamino alineada con tu búsqueda");
+      } else if (isNonSuv) {
+        score -= 25;
+        cons.push("Carrocería utilitaria/no SUV");
+      }
+    } else if (bLower.includes("cabrio") || bLower.includes("descapotable")) {
+      const isCabrio = /\b(?:cabrio|cabriolet|descapotable|roadster|spider|cc|convertible)\b/i.test(fullText);
+      if (isCabrio) {
+        score += 15;
+        pros.push("Carrocería descapotable confirmada");
+      } else {
+        score -= 30;
+      }
+    } else if (bLower.includes("familiar") || bLower.includes("station") || bLower.includes("tourer")) {
+      const isFamiliar = /\b(?:familiar|station|wagon|sw|tourer|touring|avant|combi|break|estate|variant)\b/i.test(fullText);
+      if (isFamiliar) {
+        score += 15;
+        pros.push("Carrocería familiar espaciosa con gran maletero");
+      }
+    } else if (bLower.includes("berlina") || bLower.includes("sedan")) {
+      const isBerlina = /\b(?:berlina|sedan|sedán|toledo|passat|mondeo|insignia|octavia|superb|508|c5|talisman|laguna|serie 3|serie 5|clase c|clase e|a4|a6)\b/i.test(fullText);
+      if (isBerlina) {
+        score += 12;
+        pros.push("Carrocería berlina espaciosa y confortable para carretera");
+      }
+    }
+  }
+
+  // 2. Multicriteria: Fuel Preference
+  if (opts.fuel) {
+    const reqFuel = opts.fuel.toLowerCase().trim();
+    const fullText = `${title} ${fuel || ""}`.toLowerCase();
+    if (reqFuel.includes("diesel") || reqFuel.includes("diésel")) {
+      if (fullText.includes("diesel") || fullText.includes("diésel") || fullText.includes("tdi") || fullText.includes("dci") || fullText.includes("hdi") || fullText.includes("tdci")) {
+        score += 8;
+        pros.push("Motorización diésel requerida");
+      } else if (fullText.includes("gasolina")) {
+        score -= 15;
+        cons.push("Motor gasolina (solicitaste diésel)");
+      }
+    } else if (reqFuel.includes("gasolina")) {
+      if (fullText.includes("gasolina") || fullText.includes("tsi") || fullText.includes("tce") || fullText.includes("puretech")) {
+        score += 8;
+        pros.push("Motorización gasolina requerida");
+      } else if (fullText.includes("diesel") || fullText.includes("diésel")) {
+        score -= 15;
+        cons.push("Motor diésel (solicitaste gasolina)");
+      }
+    } else if (reqFuel.includes("eco") || reqFuel.includes("hibrid") || reqFuel.includes("híbrid")) {
+      if (fullText.includes("hibrid") || fullText.includes("híbrid") || fullText.includes("hybrid") || fullText.includes("eco")) {
+        score += 15;
+        pros.push("Propulsión híbrida / etiqueta ECO solicitada");
+      }
+    }
+  }
+
+  // 3. Multicriteria: MinCv / Power Requirement
+  if (opts.minCv) {
+    const fullText = `${title} ${url || ""}`.toLowerCase();
+    const cvMatch = fullText.match(/\b(\d{2,3})\s*cv\b/i);
+    if (cvMatch) {
+      const cv = parseInt(cvMatch[1], 10);
+      if (cv >= opts.minCv) {
+        score += 10;
+        pros.push(`Potencia de ${cv} CV (cumple mínimo de ${opts.minCv} CV)`);
+      } else {
+        score -= 30;
+        cons.push(`Potencia de ${cv} CV inferior al mínimo de ${opts.minCv} CV`);
+      }
+    } else {
+      const isHighPower = /\b(?:1\.9\s*tdi|2\.0\s*tdi|2\.0\s*hdi|1\.8\s*tdci|2\.0\s*dci|1\.6\s*tdi\s*105|1\.6\s*16v|v6|140|150|170)\b/i.test(fullText);
+      const isLowPower = /\b(?:1\.9\s*sdi|1\.0\s*(?:mpi|mcv)?|1\.2\s*(?:60|16v\s*60)?|twizy|smart\s*fortwo)\b/i.test(fullText);
+      if (opts.minCv >= 80 && isLowPower) {
+        score -= 35;
+        cons.push(`Motorización básica (< 70 CV), no asegura el mínimo de ${opts.minCv} CV`);
+      } else if (isHighPower) {
+        score += 8;
+        pros.push(`Motorización solvente que supera ${opts.minCv} CV`);
+      }
+    }
+  }
+
+  // 4. Multicriteria: Highway / Long Distance suitability
+  if (opts.purpose && /viaje|viajes\s*largos|autov[ií]a|carretera|hacer\s*km/i.test(opts.purpose)) {
+    const fullText = `${title} ${url || ""}`.toLowerCase();
+    const isLongDistanceIdeal = /\b(?:berlina|sedan|toledo|passat|mondeo|golf|leon|león|octavia|focus|megane|mégane|1\.9\s*tdi|2\.0\s*tdi|2\.0\s*hdi)\b/i.test(fullText);
+    const isUrbanOnly = /\b(?:twizy|smart|seicento|micra|matiz|ka|aygo|c1|107|108|1\.9\s*sdi)\b/i.test(fullText);
+    if (isLongDistanceIdeal) {
+      score += 8;
+      pros.push("Aplomo, confort y autonomía óptimos para viajes largos");
+    } else if (isUrbanOnly) {
+      score -= 20;
+      cons.push("Enfoque puramente urbano, poco adecuado para viajes largos continuados");
+    }
+  }
+
+  // 5. Multicriteria: Color Mention in Title
+  if (opts.colors && opts.colors.length > 0) {
+    const fullText = `${title} ${url || ""}`.toLowerCase();
+    const matchesColorTitle = opts.colors.some((c) => {
+      const p = new RegExp(`\\b(?:${c}|${c}s|${c}a|${c}as)\\b`, "i");
+      return p.test(fullText);
+    });
+    if (matchesColorTitle) {
+      score += 10;
+      pros.push(`Color exterior coincidente (${opts.colors.join("/")})`);
+    }
+  }
+
+  // 6. Multicriteria: Preferred / Wanted Makes
+  if (opts.wantedMakes && opts.wantedMakes.length > 0) {
+    const tLower = title.toLowerCase();
+    if (opts.wantedMakes.some((m) => new RegExp(`\\b${m}\\b`, "i").test(tLower))) {
+      score += 10;
+      pros.push("Marca solicitada por el usuario");
     }
   }
 

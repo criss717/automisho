@@ -1,6 +1,69 @@
 import assert from 'node:assert';
 import { auditCarVisuals, auditSingleCarImage } from '../lib/vision-auditor';
+import { enrichCarResult } from '../lib/chat-helpers';
 import type { CarResult } from '../types';
+
+async function testMulticriteriaPreRanking() {
+  console.log('Testing Multicriteria Pre-ranking Matrix...');
+
+  // 1. SUV vs Utilitario matching
+  const captur = enrichCarResult(
+    { title: 'Renault Captur TCe 90cv Zen', price: 8500, year: 2018 },
+    { bodyType: 'suv', maxPrice: 10000 }
+  );
+  const clio = enrichCarResult(
+    { title: 'Renault Clio 1.2 16v Business', price: 8500, year: 2018 },
+    { bodyType: 'suv', maxPrice: 10000 }
+  );
+  assert(
+    (captur.score || 0) > (clio.score || 0),
+    `Expected SUV (Captur: ${captur.score}) to score higher than non-SUV (Clio: ${clio.score})`
+  );
+
+  // 2. Power matching: 1.9 TDI (>100 CV) vs 1.9 SDI (64 CV) when minCv: 80
+  const tdi = enrichCarResult(
+    { title: 'SEAT León 1.9 TDI 110CV SPORT', price: 2500, year: 2004 },
+    { minCv: 80, maxPrice: 3000 }
+  );
+  const sdi = enrichCarResult(
+    { title: 'SEAT Ibiza 1.9 SDI Fresh', price: 2500, year: 2004 },
+    { minCv: 80, maxPrice: 3000 }
+  );
+  assert(
+    (tdi.score || 0) > (sdi.score || 0),
+    `Expected 110CV (TDI: ${tdi.score}) to score higher than 64CV (SDI: ${sdi.score})`
+  );
+
+  // 3. Purpose matching: Viajes largos (Berlina vs Micro-urbano)
+  const toledo = enrichCarResult(
+    { title: 'SEAT Toledo 1.9 TDI Berlina', price: 2800, year: 2005 },
+    { purpose: 'coche para viajes largos y autovia', maxPrice: 3000 }
+  );
+  const twizy = enrichCarResult(
+    { title: 'Renault Twizy Urbano', price: 2800, year: 2015 },
+    { purpose: 'coche para viajes largos y autovia', maxPrice: 3000 }
+  );
+  assert(
+    (toledo.score || 0) > (twizy.score || 0),
+    `Expected highway-capable car (${toledo.score}) to score higher than micro-urban (${twizy.score}) for long trips`
+  );
+
+  // 4. Color in title boost
+  const redLeon = enrichCarResult(
+    { title: 'SEAT León 1.9 TDI Rojo Sport', price: 2800 },
+    { colors: ['rojo', 'blanco'] }
+  );
+  const greyLeon = enrichCarResult(
+    { title: 'SEAT León 1.9 TDI Gris Sport', price: 2800 },
+    { colors: ['rojo', 'blanco'] }
+  );
+  assert(
+    (redLeon.score || 0) > (greyLeon.score || 0),
+    `Expected color match in title (${redLeon.score}) to score higher than non-matching (${greyLeon.score})`
+  );
+
+  console.log('✓ Multicriteria Pre-ranking Matrix verified successfully!');
+}
 
 async function testPoolFusionLogic() {
   console.log('Testing Pool Fusion & Deduplication logic...');
@@ -118,6 +181,7 @@ async function testVideoFallbackLogic() {
 }
 
 async function runAll() {
+  await testMulticriteriaPreRanking();
   await testPoolFusionLogic();
   await testVideoFallbackLogic();
   console.log('All tests passed successfully!');

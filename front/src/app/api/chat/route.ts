@@ -149,7 +149,13 @@ export async function POST(req: Request) {
     const colors = intent.colors || [];
     const plate = intent.plate || null;
     const vin = intent.vin || null;
-    const requestedCount = Math.max(1, Math.min(intent.targetCount || 6, 20));
+    const userRequestedSpecific = Boolean(intent.targetCount && typeof intent.targetCount === "number");
+    const requestedCount = userRequestedSpecific
+      ? Math.max(1, Math.min(intent.targetCount as number, 20))
+      : 8; // Premium default advisory of 8 options when not specified
+    const visionAuditTarget = userRequestedSpecific
+      ? requestedCount + 1 // "La Ñapa": always audit 1 extra verified car
+      : requestedCount;
 
     let contextData = "";
     let extraData: Record<string, unknown> | null = null;
@@ -306,7 +312,16 @@ export async function POST(req: Request) {
         }
 
         const enriched = validCars.map((c: Record<string, unknown>) =>
-          enrichCarResult(c, maxPrice, doors)
+          enrichCarResult(c, {
+            maxPrice,
+            doors,
+            bodyType: intent.bodyType,
+            fuel: intent.fuel,
+            minCv: intent.minCv,
+            purpose: userText,
+            colors,
+            wantedMakes,
+          })
         );
 
         // Strict door filtering on enriched cars if specified
@@ -338,7 +353,7 @@ export async function POST(req: Request) {
           sortedEnriched = await auditCarVisuals(sortedEnriched, {
             requestedDoors: doors,
             userQuery: auditContextQuery,
-            targetCount: requestedCount,
+            targetCount: visionAuditTarget,
           });
 
           // Post-audit color filter: if user requested specific colors, strictly exclude non-matching colors
@@ -359,7 +374,7 @@ export async function POST(req: Request) {
           }
 
           const fullyMatched = sortedEnriched.filter((c) => (c.visualAudit as import("@/types").VisualAudit | undefined)?.userCriteriaMatch !== false);
-          if (fullyMatched.length >= Math.min(requestedCount, 3)) {
+          if (fullyMatched.length >= Math.min(visionAuditTarget, 3)) {
             sortedEnriched = fullyMatched;
           }
         } catch (visionErr) {
@@ -367,7 +382,7 @@ export async function POST(req: Request) {
         }
 
         const cars = sortedEnriched
-          .slice(0, requestedCount)
+          .slice(0, visionAuditTarget)
           .map(
             (c: import("@/types").CarResult, i: number) => {
               const audit = c.visualAudit;
@@ -400,7 +415,9 @@ export async function POST(req: Request) {
           ? `\n\nREGLA DE COLOR: El usuario tiene preferencia exclusiva por color ${colors.join(" o ")}. Los candidatos principales de la lista han sido auditados visualmente por Visión IA para cumplir esta preferencia. Menciona explícitamente el color confirmado por Visión IA en la fotografía del anuncio para cada candidato.`
           : "";
 
-        const quantityPromptRule = `\n\nREGLA DE CANTIDAD EXACTA: El usuario ha solicitado exactamente ${requestedCount} opciones. Debes presentar y detallar exactamente ${Math.min(requestedCount, sortedEnriched.length)} recomendaciones en tu respuesta numeradas del 1 al ${Math.min(requestedCount, sortedEnriched.length)}. No resumas ni recortes la lista si dispones de suficientes candidatos.`;
+        const quantityPromptRule = userRequestedSpecific
+          ? `\n\nREGLA DE CANTIDAD: El usuario ha solicitado ${requestedCount} opciones. Presenta y detalla en tu respuesta las ${Math.min(visionAuditTarget, sortedEnriched.length)} mejores recomendaciones numeradas del 1 al ${Math.min(visionAuditTarget, sortedEnriched.length)}. Si dispones de más de ${requestedCount} candidatos, presenta la última opción como recomendación 'bonus' / destacada de AutoMisho (la ñapa).`
+          : `\n\nREGLA DE ASESORÍA COMPLETA: Como el usuario no ha especificado cantidad, entrega una asesoría completa presentando y detallando las ${Math.min(requestedCount, sortedEnriched.length)} mejores opciones ordenadas por puntuación en tu respuesta numeradas del 1 al ${Math.min(requestedCount, sortedEnriched.length)}.`;
 
         contextData += `\n\n## Resultados reales ordenados por puntuación IA (${sortedEnriched.length} coches analizados en el mercado español):\n${cars}\n\nInstrucción de Calidad y Coherencia: Presenta los mejores candidatos tomando estrictamente los primeros coches de la lista anterior ordenada por puntuación. Tus recomendaciones deben coincidir de forma exacta con los vehículos analizados en el mercado. Para cada coche incluye: Precio, Kilometraje, Año, Combustible, Fuente y enlace [Ver anuncio ↗](url), 1-2 Ventajas reales y 1 Punto a revisar. Si el coche incluye información de [Visión IA: ...], menciona explícitamente en el texto lo que has auditado visualmente en la fotografía del anuncio (color, tipo de carrocería, estado de chapa/faros, potencial de reventa o daños detectados). Concluye SIEMPRE con las 3 preguntas clave para la llamada al vendedor (facturas de distribución/embrague, matrícula exacta o VIN, y motivo de venta).${proactiveFilterPrompt}${colorPromptRule}${quantityPromptRule}${doors ? `\n\nREGLA CRÍTICA INQUEBRANTABLE DE CARROCERÍA: El usuario exige ÚNICAMENTE vehículos de ${doors} puertas. Queda TERMINANTEMENTE PROHIBIDO recomendar, incluir o mencionar coches de 4 o 5 puertas, ni siquiera como "alternativas" o notas. Recomienda SOLO coches de ${doors} puertas.` : ""}`;
 
@@ -438,7 +455,7 @@ export async function POST(req: Request) {
 
     // Build enhanced system prompt with context data
     const systemPrompt = contextData
-      ? `${AUTOMISHO_SYSTEM_PROMPT}\n\n---\nTienes datos reales del sistema. Úsalos para responder al usuario. NO inventes datos.${contextData}\n\nSi hay resultados de coches, presenta detalladamente exactamente las ${Math.min(requestedCount, extraDataCars.length)} mejores opciones ordenadas por puntuación en markdown con links. Si hay matrícula/VIN, ofrece las 3 opciones DGT/CarVertical/Carfax con links externos.`
+      ? `${AUTOMISHO_SYSTEM_PROMPT}\n\n---\nTienes datos reales del sistema. Úsalos para responder al usuario. NO inventes datos.${contextData}\n\nSi hay resultados de coches, presenta detalladamente exactamente las ${Math.min(visionAuditTarget, extraDataCars.length)} mejores opciones ordenadas por puntuación en markdown con links. Si hay matrícula/VIN, ofrece las 3 opciones DGT/CarVertical/Carfax con links externos.`
       : AUTOMISHO_SYSTEM_PROMPT;
 
     // Helper: generate static markdown fallback when LLM fails but we have cars

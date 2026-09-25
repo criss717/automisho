@@ -16,7 +16,7 @@ export const UserIntentSchema = z.object({
   bodyType: z.string().nullish().default(null).describe("Tipo de carrocería (berlina, familiar, suv, utilitario, coupe, cabrio)"),
   plate: z.string().nullish().default(null).describe("Matrícula española si mencionó alguna para auditar (ej: '1234BBB')"),
   vin: z.string().nullish().default(null).describe("Número de bastidor VIN de 17 caracteres si mencionó alguno"),
-  targetCount: z.number().nullish().default(6).describe("Cantidad exacta de coches que el usuario pidió ver (ej: 6 o 7). Por defecto 6."),
+  targetCount: z.number().nullish().default(null).describe("Cantidad exacta de coches que el usuario pidió ver si lo especificó explícitamente (ej: 5, 6, 7). Deja null si no especificó cantidad."),
 });
 
 export type UserIntent = z.infer<typeof UserIntentSchema>;
@@ -43,7 +43,7 @@ export async function classifyUserIntent(
     bodyType: null,
     plate: null,
     vin: null,
-    targetCount: 6,
+    targetCount: null,
   };
 
   if (!isCommandCodeConfigured()) {
@@ -72,6 +72,7 @@ REGLAS CRÍTICAS DE EXTRACCIÓN:
 4. "colors": Si el usuario pide colores (ej: "blanco o negro") y luego dice "y mete también los rojos", COMBINA los colores: ["blanco", "negro", "rojo"]. NO borres los colores anteriores a menos que diga "cualquier color" o "cambia a solo rojo".
 5. "maxPrice": Presupuesto tope en euros. Si se fijó en un mensaje anterior (ej: 3000€) y no se cambió, manténlo.
 6. "minCv": Si pidió mínimo de CV (ej: "minimo 80 cv", "minimo 70 cv"), extrae el número entero.
+7. "targetCount": Si el usuario pide un número concreto de opciones (ej: "las 5 mejores", "dame 3 opciones", "7 coches"), extrae ese número entero. Si no especificó ninguna cantidad, pon null.
 
 Historial de conversación:
 ${conversationHistory}
@@ -111,12 +112,30 @@ ${conversationHistory}
     if (/azul/i.test(lastLower)) fallbackColors.push("azul");
     if (/gris/i.test(lastLower)) fallbackColors.push("gris");
 
+    const countMatch = lastText.match(/\b(?:los|las)?\s*(diez|dieci|cinco|tres|cuatro|seis|siete|ocho|nueve|\d{1,2})\s*(?:mejores|opciones|primeros|coches|vehiculos|candidatos)?\b/i);
+    let fallbackCount: number | null = null;
+    if (countMatch) {
+      const numStr = countMatch[1].toLowerCase();
+      const wordToNum: Record<string, number> = {
+        diez: 10,
+        cinco: 5,
+        tres: 3,
+        cuatro: 4,
+        seis: 6,
+        siete: 7,
+        ocho: 8,
+        nueve: 9,
+      };
+      fallbackCount = wordToNum[numStr] || parseInt(numStr, 10) || null;
+    }
+
     return {
       ...defaultIntent,
       isSearch: /(?:coche|coches|opciones|busco|quiero|viaje|presupuesto)/i.test(lastText),
       maxPrice: maxP && maxP > 100 ? maxP : null,
       excludedMakes: fallbackExcluded,
       colors: fallbackColors,
+      targetCount: fallbackCount,
     };
   }
 }
