@@ -20,6 +20,7 @@ const BACKEND_URL = process.env.BACKEND_URL || "http://localhost:8000";
 
 import { detectVIN, detectPlate, detectCarSearch, enrichCarResult, isCarMatchingDoors, isCarMatchingColor } from "@/lib/chat-helpers";
 
+import { classifyUserIntent } from "@/lib/intent-classifier";
 import { lookupVehicleDgt } from "@/lib/dgt-client";
 
 async function searchBackend(
@@ -135,67 +136,20 @@ export async function POST(req: Request) {
       });
     }
 
-    // Detect intents
-    const search = detectCarSearch(userText);
-    const plate = detectPlate(userText);
-    const vin = detectVIN(userText);
+    // 1. AI-Driven Structured Intent Classification (Zero-Regex, full conversation context)
+    const intent = await classifyUserIntent(messages);
+    console.log("[chat] AI Classified Intent:", JSON.stringify(intent));
 
-    // Contextual Memory: inherit filters from recent conversation history if not specified in current message
-    if (messages.length > 1) {
-      for (let i = messages.length - 2; i >= 0; i--) {
-        const prevMsg = messages[i];
-        if (prevMsg.role !== "user") continue;
-        const prevText =
-          (prevMsg.parts as unknown as { type: string; text?: string }[])
-            ?.filter((p) => p.type === "text")
-            .map((p) => p.text)
-            .join("") || "";
-        if (!prevText) continue;
-
-        const prevSearch = detectCarSearch(prevText);
-        if (search.maxPrice === undefined && prevSearch.maxPrice !== undefined) {
-          search.maxPrice = prevSearch.maxPrice;
-        }
-        if (search.minPrice === undefined && prevSearch.minPrice !== undefined) {
-          search.minPrice = prevSearch.minPrice;
-        }
-        if (search.doors === undefined && prevSearch.doors !== undefined) {
-          search.doors = prevSearch.doors;
-        }
-        // Inherit or un-exclude makes across messages
-        if ((!search.excludedMakes || search.excludedMakes.length === 0) && prevSearch.excludedMakes && prevSearch.excludedMakes.length > 0) {
-          search.excludedMakes = [...prevSearch.excludedMakes];
-        }
-        // If user explicitly asks to add or re-include a brand (e.g. "sumamos peugeot", "incluye peugeot", "peugeot también")
-        const unexcludePattern = /(?:sum(?:a|ar|amos)|inclu(?:ye|ir|imos)|pon(?:er)?|dej(?:a|ar|amos)|vuelve\s+a\s+meter|tambi[eé]n)\s+(?:a\s+)?(?:la\s+marca\s+)?([a-z]+)/i;
-        const unexMatch = userText.match(unexcludePattern);
-        if (unexMatch) {
-          let unexBrand = unexMatch[1].toLowerCase();
-          if (unexBrand === "pegout") unexBrand = "peugeot";
-          if (unexBrand === "chebrolet") unexBrand = "chevrolet";
-          if (search.excludedMakes) {
-            search.excludedMakes = search.excludedMakes.filter((b) => b !== unexBrand);
-          }
-          if (!search.wantedMakes) search.wantedMakes = [];
-          if (!search.wantedMakes.includes(unexBrand)) {
-            search.wantedMakes.push(unexBrand);
-          }
-        }
-
-        // Inherit or additively merge colors (e.g. "sumamos el rojo" -> ["blanco", "negro", "rojo"])
-        const resetColorIntent = /(?:cualquier|todos? los?|da igual el|sin preferencia de)\s*colou?r(?:es)?/i.test(userText);
-        const isAdditiveColor = /(?:sum(?:a|ar|amos)|agreg(?:a|ar|amos)|tambi[eé]n|inclu(?:ye|ir|imos)|y\s+(?:el|los|color)?)\s*(?:color|colores|rojo|blanco|negro|azul|gris|verde|amarillo)/i.test(userText);
-
-        if (isAdditiveColor && search.colors && search.colors.length > 0 && prevSearch.colors && prevSearch.colors.length > 0) {
-          search.colors = Array.from(new Set([...prevSearch.colors, ...search.colors]));
-        } else if (!resetColorIntent && (!search.colors || search.colors.length === 0) && prevSearch.colors && prevSearch.colors.length > 0) {
-          search.colors = prevSearch.colors;
-        }
-        if (prevSearch.isSearch) {
-          search.isSearch = true;
-        }
-      }
-    }
+    const isSearch = intent.isSearch;
+    const maxPrice = intent.maxPrice ?? undefined;
+    const minPrice = intent.minPrice ?? undefined;
+    const doors = intent.doors ?? undefined;
+    const excludedMakes = intent.excludedMakes || [];
+    const wantedMakes = intent.wantedMakes || [];
+    const colors = intent.colors || [];
+    const plate = intent.plate || null;
+    const vin = intent.vin || null;
+    const requestedCount = Math.max(1, Math.min(intent.targetCount || 6, 20));
 
     let contextData = "";
     let extraData: Record<string, unknown> | null = null;
@@ -224,14 +178,16 @@ export async function POST(req: Request) {
       }
     }
 
-    if (search.isSearch) {
+    if (isSearch) {
       // Build clean query: only positive makes or empty string (never conversational prose)
-      const cleanScrapeQuery = search.wantedMakes && search.wantedMakes.length > 0 ? search.wantedMakes.join(" ") : "";
+      const cleanScrapeQuery = intent.query
+        ? intent.query
+        : (wantedMakes.length > 0 ? wantedMakes.join(" ") : "");
 
       // Agent is primary; scrape backend runs as safe structured fallback
       const [agentSettled, scrapeSettled] = await Promise.allSettled([
-        agentSearchBackend(userText, search.maxPrice),
-        searchBackend(cleanScrapeQuery, search.maxPrice, search.minPrice, search.doors, search.excludedMakes, search.wantedMakes),
+        agentSearchBackend(userText, maxPrice),
+        searchBackend(cleanScrapeQuery, maxPrice, minPrice, doors, excludedMakes, wantedMakes),
       ]);
       const agentResults =
         agentSettled.status === "fulfilled" ? agentSettled.value : null;
@@ -245,106 +201,153 @@ export async function POST(req: Request) {
         scrapeResults != null &&
         Array.isArray((scrapeResults as { results?: unknown }).results) &&
         ((scrapeResults as { results: unknown[] }).results.length > 0);
-      const searchResults = hasAgentCars
-        ? agentResults
-        : hasScrapeCars
-          ? scrapeResults
-          : null;
-      const chosen = hasAgentCars
-        ? "agent"
-        : hasScrapeCars
-          ? (scrapeResults as { source?: string } | null)?.source ?? "scrape"
-          : "none";
-      console.log("[chat] agent:", agentSettled.status, hasAgentCars ? "cars" : "empty", "| scrape:", scrapeSettled.status, hasScrapeCars ? "cars" : "empty", "| chosen:", chosen);
-      console.log("[chat] search results:", (searchResults as { total?: number } | null)?.total ?? 0, "from", (searchResults as { source?: string } | null)?.source, "maxPrice", search.maxPrice, "doors:", search.doors);
+      const rawAgentCars =
+        hasAgentCars && Array.isArray((agentResults as { results?: unknown[] }).results)
+          ? ((agentResults as { results: Record<string, unknown>[] }).results)
+          : [];
+      const rawScrapeCars =
+        hasScrapeCars && Array.isArray((scrapeResults as { results?: unknown[] }).results)
+          ? ((scrapeResults as { results: Record<string, unknown>[] }).results)
+          : [];
 
-      if (searchResults?.results?.length > 0) {
+      // FUSION OF POOLS: Combine both Agent cars and Scrape cars into one unified multi-source pool
+      const allRawCars = [...rawAgentCars, ...rawScrapeCars];
+
+      // Deduplicate by URL or normalized Title + Price
+      const seenKeys = new Set<string>();
+      const dedupedCars: Record<string, unknown>[] = [];
+
+      for (const car of allRawCars) {
+        const rawUrl = String(car.url || "").trim().toLowerCase();
+        const rawTitle = String(car.title || "").trim().toLowerCase().replace(/\s+/g, " ");
+        const price = Number(car.price) || 0;
+
+        let key = "";
+        if (rawUrl && rawUrl.startsWith("http")) {
+          try {
+            const parsedUrl = new URL(rawUrl);
+            key = parsedUrl.origin + parsedUrl.pathname;
+          } catch {
+            key = rawUrl;
+          }
+        }
+        if (!key) {
+          key = `${rawTitle}_${price}`;
+        }
+
+        if (!seenKeys.has(key)) {
+          seenKeys.add(key);
+          dedupedCars.push(car);
+        }
+      }
+
+      // Group by normalized portal source (coches.net, autoscout24, wallapop, milanuncios, etc.)
+      const bySource: Record<string, Record<string, unknown>[]> = {};
+      for (const c of dedupedCars) {
+        const src = String(c.source || "other").toLowerCase().replace("_", ".");
+        if (!bySource[src]) bySource[src] = [];
+        bySource[src].push(c);
+      }
+
+      // Fair round-robin interleaving across sources to ensure balanced market representation
+      const balancedPool: Record<string, unknown>[] = [];
+      const maxSourceLen = Math.max(...Object.values(bySource).map((arr) => arr.length), 0);
+      for (let i = 0; i < maxSourceLen; i++) {
+        for (const src of Object.keys(bySource)) {
+          if (i < bySource[src].length) {
+            balancedPool.push(bySource[src][i]);
+          }
+        }
+      }
+
+      const totalCombined = balancedPool.length;
+      const searchResults = totalCombined > 0
+        ? { results: balancedPool, source: "hybrid-pool", total: totalCombined }
+        : null;
+      const chosen = (hasAgentCars && hasScrapeCars)
+        ? "hybrid (agent+scrape)"
+        : hasAgentCars
+          ? "agent"
+          : hasScrapeCars
+            ? "scrape"
+            : "none";
+
+      console.log(
+        `[chat] agent: ${agentSettled.status} (${rawAgentCars.length} cars) | scrape: ${scrapeSettled.status} (${rawScrapeCars.length} cars) | chosen: ${chosen} -> combined pool: ${totalCombined} cars across ${Object.keys(bySource).length} portals (${Object.keys(bySource).join(", ")})`
+      );
+      console.log(
+        "[chat] search results:",
+        totalCombined,
+        "from",
+        searchResults?.source,
+        "maxPrice",
+        maxPrice,
+        "doors:",
+        doors
+      );
+
+      if (searchResults && Array.isArray(searchResults.results) && searchResults.results.length > 0) {
         // Enforce hard price filter: discard any car exceeding user maxPrice by more than 5%
         let validCars = searchResults.results as Record<string, unknown>[];
-        if (search.maxPrice) {
+        if (maxPrice) {
           validCars = validCars.filter((c) => {
             const price = Number(c.price);
             if (!price || isNaN(price)) return false;
-            return price <= (search.maxPrice as number) * 1.05;
+            return price <= maxPrice * 1.05;
           });
         }
 
         // Enforce excluded makes filter: immediately purge any car matching an excluded brand
-        if (search.excludedMakes && search.excludedMakes.length > 0) {
-          const excludedList = search.excludedMakes;
+        if (excludedMakes.length > 0) {
           validCars = validCars.filter((c) => {
             const title = String(c.title || "").toLowerCase();
-            return !excludedList.some((brand) => new RegExp(`\\b${brand}\\b`, "i").test(title));
+            return !excludedMakes.some((brand) => new RegExp(`\\b${brand}\\b`, "i").test(title));
           });
         }
 
         const enriched = validCars.map((c: Record<string, unknown>) =>
-          enrichCarResult(c, search.maxPrice, search.doors)
+          enrichCarResult(c, maxPrice, doors)
         );
 
         // Strict door filtering on enriched cars if specified
         let filteredEnriched = enriched;
-        if (search.doors) {
+        if (doors) {
           filteredEnriched = filteredEnriched.filter((c: { title: string; url?: string }) =>
-            isCarMatchingDoors(c.title, c.url, search.doors)
+            isCarMatchingDoors(c.title, c.url, doors)
           );
         }
 
         // Color filtering before vision audit (title-based check)
-        if (search.colors && search.colors.length > 0) {
+        if (colors.length > 0) {
           const colorMatched = filteredEnriched.filter((c: { title: string }) =>
-            isCarMatchingColor(c.title, search.colors)
+            isCarMatchingColor(c.title, colors)
           );
-          // Only apply strict pre-filter if it doesn't discard all cars (in case colors are only visible in photos)
           if (colorMatched.length > 0) {
             filteredEnriched = colorMatched;
           }
         }
 
-        // Sort by score descending to prioritize best value/quality options
         let sortedEnriched = [...filteredEnriched].sort((a, b) => (Number(b.score) || 0) - (Number(a.score) || 0));
-
-        // Extract requested count if user asked for a specific number (e.g. "las diez mejores", "top 5", "3 coches")
-        const countMatch = userText.match(/\b(?:los|las)?\s*(diez|dieci|cinco|tres|cuatro|seis|siete|ocho|nueve|\d{1,2})\s*(?:mejores|opciones|primeros|coches|vehiculos|candidatos)?\b/i);
-        let requestedCount = 10;
-        if (countMatch) {
-          const numStr = countMatch[1].toLowerCase();
-          const wordToNum: Record<string, number> = {
-            diez: 10,
-            cinco: 5,
-            tres: 3,
-            cuatro: 4,
-            seis: 6,
-            siete: 7,
-            ocho: 8,
-            nueve: 9,
-          };
-          requestedCount = wordToNum[numStr] || parseInt(numStr, 10) || 10;
-          requestedCount = Math.max(1, Math.min(requestedCount, 20));
-        }
 
         // Multimodal AI Vision & Description Audit: Inspect candidates against user criteria
         try {
           const { auditCarVisuals } = await import("@/lib/vision-auditor");
-          // Include full context so visual auditor knows entire constraint history
-          const auditContextQuery = search.maxPrice
-            ? `${userText} (PRESUPUESTO MÁXIMO: ${search.maxPrice}€)`
+          const auditContextQuery = maxPrice
+            ? `${userText} (PRESUPUESTO MÁXIMO: ${maxPrice}€)`
             : userText;
           sortedEnriched = await auditCarVisuals(sortedEnriched, {
-            requestedDoors: search.doors,
+            requestedDoors: doors,
             userQuery: auditContextQuery,
             targetCount: requestedCount,
           });
 
           // Post-audit color filter: if user requested specific colors, strictly exclude non-matching colors
-          if (search.colors && search.colors.length > 0) {
+          if (colors.length > 0) {
             const visualColorMatched = sortedEnriched.filter((c) => {
               const audit = c.visualAudit as import("@/types").VisualAudit | undefined;
-              // If AI detected a color and it's NOT in requested colors, discard it
-              if (audit?.colorDetected && !isCarMatchingColor(c.title, search.colors, audit.colorDetected)) {
+              if (audit?.colorDetected && !isCarMatchingColor(c.title, colors, audit.colorDetected)) {
                 return false;
               }
-              // If userCriteriaMatch is explicitly false due to color, discard it
               if (audit?.userCriteriaMatch === false && (audit.rejectionReason?.toLowerCase().includes("color") || audit.criteriaNotes?.toLowerCase().includes("color"))) {
                 return false;
               }
@@ -355,7 +358,6 @@ export async function POST(req: Request) {
             }
           }
 
-          // Prioritize cars that pass userCriteriaMatch, discard rejected ones if enough valid ones exist
           const fullyMatched = sortedEnriched.filter((c) => (c.visualAudit as import("@/types").VisualAudit | undefined)?.userCriteriaMatch !== false);
           if (fullyMatched.length >= Math.min(requestedCount, 3)) {
             sortedEnriched = fullyMatched;
@@ -389,23 +391,23 @@ export async function POST(req: Request) {
           )
           .join("\n");
 
-        const isBroadQuery = !search.doors && !search.colors && !/(?:rojo|negro|blanco|azul|gris|verde|amarillo|cabrio|descapotable|coupe|coupé|familiar|suv|berlina|reventa|revender|chollo)/i.test(userText);
+        const isBroadQuery = !doors && colors.length === 0 && !/(?:rojo|negro|blanco|azul|gris|verde|amarillo|cabrio|descapotable|coupe|coupé|familiar|suv|berlina|reventa|revender|chollo)/i.test(userText);
         const proactiveFilterPrompt = isBroadQuery
           ? "\n\nPREGUNTA PROACTIVA DE AFINADO (OBLIGATORIA): Como la búsqueda del usuario es abierta o genérica, al final de tu respuesta, pregúntale de forma cercana y proactiva si desea afinar con algún filtro específico: ¿Tiene preferencia por algún color (ej. rojo, negro, blanco...), tipo de carrocería (descapotable, utilitario, familiar, coupé), marca concreta o busca unidades con margen para reventa / negocio?"
           : "";
 
-        const colorPromptRule = search.colors && search.colors.length > 0
-          ? `\n\nREGLA CRÍTICA DE COLOR: El usuario exige exclusivamente vehículo de color ${search.colors.join(" o ")}. Queda TERMINANTEMENTE PROHIBIDO recomendar vehículos de colores excluidos (como negro, verde, marrón, etc.). Menciona explícitamente el color confirmado por Visión IA en la fotografía del anuncio para cada candidato.`
+        const colorPromptRule = colors.length > 0
+          ? `\n\nREGLA DE COLOR: El usuario tiene preferencia exclusiva por color ${colors.join(" o ")}. Los candidatos principales de la lista han sido auditados visualmente por Visión IA para cumplir esta preferencia. Menciona explícitamente el color confirmado por Visión IA en la fotografía del anuncio para cada candidato.`
           : "";
 
-        const quantityPromptRule = `\n\nREGLA DE CANTIDAD EXACTA: El usuario ha solicitado exactamente ${requestedCount} opciones. Debes presentar y detallar exactamente ${Math.min(requestedCount, sortedEnriched.length)} recomendaciones en tu respuesta numeradas del 1 al ${Math.min(requestedCount, sortedEnriched.length)}. No resumas ni recortes la lista a 3 o 5 si dispones de suficientes candidatos en la lista anterior.`;
+        const quantityPromptRule = `\n\nREGLA DE CANTIDAD EXACTA: El usuario ha solicitado exactamente ${requestedCount} opciones. Debes presentar y detallar exactamente ${Math.min(requestedCount, sortedEnriched.length)} recomendaciones en tu respuesta numeradas del 1 al ${Math.min(requestedCount, sortedEnriched.length)}. No resumas ni recortes la lista si dispones de suficientes candidatos.`;
 
-        contextData += `\n\n## Resultados reales ordenados por puntuación IA (${sortedEnriched.length} coches analizados en el mercado español):\n${cars}\n\nInstrucción de Calidad y Coherencia: Presenta los mejores candidatos tomando estrictamente los primeros coches de la lista anterior ordenada por puntuación. Tus recomendaciones deben coincidir de forma exacta con los vehículos analizados en el mercado. Para cada coche incluye: Precio, Kilometraje, Año, Combustible, Fuente y enlace [Ver anuncio ↗](url), 1-2 Ventajas reales y 1 Punto a revisar. Si el coche incluye información de [Visión IA: ...], menciona explícitamente en el texto lo que has auditado visualmente en la fotografía del anuncio (color, tipo de carrocería, estado de chapa/faros, potencial de reventa o daños detectados). Concluye SIEMPRE con las 3 preguntas clave para la llamada al vendedor (facturas de distribución/embrague, matrícula exacta o VIN, y motivo de venta).${proactiveFilterPrompt}${colorPromptRule}${quantityPromptRule}${search.doors ? `\n\nREGLA CRÍTICA INQUEBRANTABLE DE CARROCERÍA: El usuario exige ÚNICAMENTE vehículos de ${search.doors} puertas. Queda TERMINANTEMENTE PROHIBIDO recomendar, incluir o mencionar coches de 4 o 5 puertas, ni siquiera como "alternativas" o notas. Recomienda SOLO coches de ${search.doors} puertas.` : ""}`;
+        contextData += `\n\n## Resultados reales ordenados por puntuación IA (${sortedEnriched.length} coches analizados en el mercado español):\n${cars}\n\nInstrucción de Calidad y Coherencia: Presenta los mejores candidatos tomando estrictamente los primeros coches de la lista anterior ordenada por puntuación. Tus recomendaciones deben coincidir de forma exacta con los vehículos analizados en el mercado. Para cada coche incluye: Precio, Kilometraje, Año, Combustible, Fuente y enlace [Ver anuncio ↗](url), 1-2 Ventajas reales y 1 Punto a revisar. Si el coche incluye información de [Visión IA: ...], menciona explícitamente en el texto lo que has auditado visualmente en la fotografía del anuncio (color, tipo de carrocería, estado de chapa/faros, potencial de reventa o daños detectados). Concluye SIEMPRE con las 3 preguntas clave para la llamada al vendedor (facturas de distribución/embrague, matrícula exacta o VIN, y motivo de venta).${proactiveFilterPrompt}${colorPromptRule}${quantityPromptRule}${doors ? `\n\nREGLA CRÍTICA INQUEBRANTABLE DE CARROCERÍA: El usuario exige ÚNICAMENTE vehículos de ${doors} puertas. Queda TERMINANTEMENTE PROHIBIDO recomendar, incluir o mencionar coches de 4 o 5 puertas, ni siquiera como "alternativas" o notas. Recomienda SOLO coches de ${doors} puertas.` : ""}`;
 
         // Collect enriched for data block and dashboard
         extraDataCars.push(...sortedEnriched);
       } else {
-        contextData += `\n\n## Búsqueda ejecutada pero sin resultados\nSe buscó "${search.query}"${search.maxPrice ? ` con precio máximo ${search.maxPrice}€` : ""}${search.doors ? ` de ${search.doors} puertas` : ""} en el mercado. No se encontraron anuncios actualmente con esos filtros exactos. Informa al usuario con amabilidad y sugiere ajustar la búsqueda (ampliar presupuesto, cambiar marca o modelo).`;
+        contextData += `\n\n## Búsqueda ejecutada pero sin resultados\nSe buscó en el mercado español con precio máximo ${maxPrice ? `${maxPrice}€` : "no especificado"}${doors ? ` de ${doors} puertas` : ""}. No se encontraron anuncios actualmente con esos filtros exactos. Informa al usuario con amabilidad y sugiere ajustar la búsqueda (ampliar presupuesto, cambiar marca o modelo).`;
       }
     }
 
@@ -432,11 +434,11 @@ export async function POST(req: Request) {
       extraData = { dgtOptions: { plate: plate ?? null, vin: vin ?? null } };
     }
 
-    console.log("[chat] model:", CHAT_MODEL, "| search:", search.isSearch, "price:", search.maxPrice, "| plate:", plate, "| vin:", vin, "| conv:", conversationId);
+    console.log("[chat] model:", CHAT_MODEL, "| search:", isSearch, "price:", maxPrice, "| plate:", plate, "| vin:", vin, "| conv:", conversationId);
 
     // Build enhanced system prompt with context data
     const systemPrompt = contextData
-      ? `${AUTOMISHO_SYSTEM_PROMPT}\n\n---\nTienes datos reales del sistema. Úsalos para responder al usuario. NO inventes datos.${contextData}\n\nSi hay resultados de coches, presenta 3-5 mejores en markdown con links. Si hay matrícula/VIN, ofrece las 3 opciones DGT/CarVertical/Carfax con links externos.`
+      ? `${AUTOMISHO_SYSTEM_PROMPT}\n\n---\nTienes datos reales del sistema. Úsalos para responder al usuario. NO inventes datos.${contextData}\n\nSi hay resultados de coches, presenta detalladamente exactamente las ${Math.min(requestedCount, extraDataCars.length)} mejores opciones ordenadas por puntuación en markdown con links. Si hay matrícula/VIN, ofrece las 3 opciones DGT/CarVertical/Carfax con links externos.`
       : AUTOMISHO_SYSTEM_PROMPT;
 
     // Helper: generate static markdown fallback when LLM fails but we have cars
@@ -461,18 +463,27 @@ export async function POST(req: Request) {
       return "No he podido conectar temporalmente con el modelo de lenguaje, pero tus parámetros de búsqueda han sido registrados. Por favor, intenta de nuevo tu consulta.";
     };
 
-    // Attempt LLM stream with generous timeout (95s: agent + scrape + vision) + graceful fallback
+    // Attempt LLM stream with generous timeout (140s: intent + agent + scrape + vision + stream)
     let llmTimeout: ReturnType<typeof setTimeout> | null = null;
     const abortController = new AbortController();
     llmTimeout = setTimeout(() => {
-      console.warn("[chat] LLM timeout 95s — aborting stream for", conversationId);
+      console.warn("[chat] LLM timeout 140s — aborting stream for", conversationId);
       try { abortController.abort(); } catch {}
-    }, 95000);
+    }, 140000);
 
     // Helper to persist assistant message to DB
     const persistAssistantMessage = async (text: string) => {
       if (conversationId && text) {
         try {
+          const convExists = await prisma.conversation.findUnique({
+            where: { id: conversationId },
+            select: { id: true },
+          });
+          if (!convExists) {
+            console.info("[chat] Conversation was closed/deleted by user, skipping persist");
+            return;
+          }
+
           const savedText = extraDataCars.length > 0
             ? `${text}\n\n<!--AUTOMISHO_CARS_DATA:${JSON.stringify(extraDataCars)}-->`
             : text;

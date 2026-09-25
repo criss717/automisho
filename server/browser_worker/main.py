@@ -1,6 +1,6 @@
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import List, Optional
 from urllib.parse import quote_plus
 import asyncio
@@ -221,26 +221,51 @@ EXTRACT_LISTINGS_JS = """() => {
   const out = [];
   const seen = new Set();
 
-  const extractCardImage = (card) => {
-    // 1. Check all img tags (including lazy loading attributes)
+  const extractCardImages = (card) => {
+    const list = [];
+    const seenImg = new Set();
+    const addImg = (u) => {
+      if (!u || typeof u !== 'string') return;
+      u = u.trim();
+      if (!u.startsWith('http') && u.startsWith('//')) u = 'https:' + u;
+      if (!u.startsWith('http')) return;
+      const low = u.toLowerCase();
+      if (
+        low.endsWith('.svg') ||
+        low.includes('.svg?') ||
+        low.includes('logo') ||
+        low.includes('avatar') ||
+        low.includes('icon') ||
+        low.includes('badge') ||
+        low.endsWith('.mp4') ||
+        low.includes('.mp4?') ||
+        low.endsWith('.webm') ||
+        low.endsWith('.mov') ||
+        low.endsWith('.m3u8')
+      ) return;
+      if (!seenImg.has(u)) {
+        seenImg.add(u);
+        list.push(u);
+      }
+    };
+
+    // 1. Check all img tags
     const imgs = card.querySelectorAll('img');
     for (const img of imgs) {
       const candidates = [
         img.getAttribute('data-src'),
         img.getAttribute('data-lazy-src'),
         img.getAttribute('data-original'),
+        img.currentSrc,
         img.getAttribute('src'),
       ];
       for (const c of candidates) {
-        if (c && c.startsWith('http') && !c.includes('logo') && !c.includes('avatar') && !c.includes('icon') && !c.endsWith('.svg') && !c.includes('.svg?')) {
-          return c;
-        }
+        addImg(c);
       }
       const srcset = img.getAttribute('srcset') || img.getAttribute('data-srcset');
       if (srcset) {
-        const first = srcset.split(',')[0].trim().split(' ')[0];
-        if (first && first.startsWith('http') && !first.endsWith('.svg')) {
-          return first;
+        for (const part of srcset.split(',')) {
+          addImg(part.trim().split(' ')[0]);
         }
       }
     }
@@ -249,28 +274,26 @@ EXTRACT_LISTINGS_JS = """() => {
     for (const s of sources) {
       const srcset = s.getAttribute('srcset');
       if (srcset) {
-        const first = srcset.split(',')[0].trim().split(' ')[0];
-        if (first && first.startsWith('http') && !first.endsWith('.svg')) {
-          return first;
+        for (const part of srcset.split(',')) {
+          addImg(part.trim().split(' ')[0]);
         }
       }
     }
-    // 3. Check video poster (when first media element is a video preview)
+    // 3. Check video poster
     const video = card.querySelector('video[poster]');
     if (video) {
-      const poster = video.getAttribute('poster');
-      if (poster && poster.startsWith('http')) return poster;
+      addImg(video.getAttribute('poster'));
     }
     // 4. Check background-image
     const bgEls = card.querySelectorAll('[style*="background-image"], [style*="background:"]');
     for (const el of bgEls) {
       const style = el.getAttribute('style') || '';
       const match = style.match(/url\\(['"]?(https?:[^'")]+)['"]?\\)/i);
-      if (match && match[1] && !match[1].endsWith('.svg')) {
-        return match[1];
+      if (match && match[1]) {
+        addImg(match[1]);
       }
     }
-    return null;
+    return list;
   };
 
   // 1. AutoScout24 specific extraction
@@ -292,9 +315,10 @@ EXTRACT_LISTINGS_JS = """() => {
       price = pEl ? pEl.innerText.trim() : null;
     }
 
-    const imageUrl = extractCardImage(art);
+    const cardImages = extractCardImages(art);
+    const imageUrl = cardImages.length > 0 ? cardImages[0] : null;
     const fullText = (art.innerText || '').replace(/\\s+/g, ' ').trim().slice(0, 800);
-    out.push({ title: title.slice(0, 160), url: link, price: price ? String(price) : null, image_url: imageUrl, description: fullText });
+    out.push({ title: title.slice(0, 160), url: link, price: price ? String(price) : null, image_url: imageUrl, images: cardImages, description: fullText });
     seen.add(link);
   }
   if (out.length > 0) return out;
@@ -316,9 +340,10 @@ EXTRACT_LISTINGS_JS = """() => {
     const priceEl = card.querySelector('[data-testid*="price"], [class*="price" i]');
     const priceText = priceEl ? priceEl.innerText.trim() : card.innerText;
 
-    const imageUrl = extractCardImage(card);
+    const cardImages = extractCardImages(card);
+    const imageUrl = cardImages.length > 0 ? cardImages[0] : null;
     const fullText = (card.innerText || '').replace(/\\s+/g, ' ').trim().slice(0, 800);
-    out.push({ title: title.slice(0, 160), url: link, price: priceText ? priceText.slice(0, 50) : null, image_url: imageUrl, description: fullText });
+    out.push({ title: title.slice(0, 160), url: link, price: priceText ? priceText.slice(0, 50) : null, image_url: imageUrl, images: cardImages, description: fullText });
     seen.add(link);
   }
   if (out.length > 0) return out;
@@ -338,9 +363,10 @@ EXTRACT_LISTINGS_JS = """() => {
     const priceMatch = card.innerText.match(/(\\d[\\d\\s\\.\\,]*\\s*€|€\\s*\\d[\\d\\s\\.\\,]*)/);
     const price = priceMatch ? priceMatch[0] : null;
 
-    const imageUrl = extractCardImage(card);
+    const cardImages = extractCardImages(card);
+    const imageUrl = cardImages.length > 0 ? cardImages[0] : null;
     const fullText = (card.innerText || '').replace(/\\s+/g, ' ').trim().slice(0, 800);
-    out.push({ title: title.slice(0, 160), url: link, price: price, image_url: imageUrl, description: fullText });
+    out.push({ title: title.slice(0, 160), url: link, price: price, image_url: imageUrl, images: cardImages, description: fullText });
     seen.add(link);
   }
   if (out.length > 0) return out;
@@ -367,8 +393,9 @@ EXTRACT_LISTINGS_JS = """() => {
     }
     if (title.length < 5) continue;
 
-    const imageUrl = extractCardImage(card);
-    out.push({ title: title.slice(0, 160), url: link, image_url: imageUrl, price: priceMatch[0], description: cardText.slice(0, 800) });
+    const cardImages = extractCardImages(card);
+    const imageUrl = cardImages.length > 0 ? cardImages[0] : null;
+    out.push({ title: title.slice(0, 160), url: link, image_url: imageUrl, images: cardImages, price: priceMatch[0], description: cardText.slice(0, 800) });
     seen.add(link);
   }
   return out;
@@ -529,6 +556,7 @@ class CarItem(BaseModel):
     source: str
     url: str
     image_url: Optional[str] = None
+    images: List[str] = Field(default_factory=list)
     description: Optional[str] = None
 
 
@@ -651,13 +679,18 @@ async def _scrape_source(
                 if not _price_in_bounds(price, max_price, min_price):
                     continue
                 image_url = entry.get("image_url")
+                raw_imgs = entry.get("images") or []
+                valid_imgs = [u for u in raw_imgs if isinstance(u, str) and u.startswith("http")]
+                if not valid_imgs and image_url and image_url.startswith("http"):
+                    valid_imgs = [image_url]
                 items.append(
                     CarItem(
                         title=entry.get("title", "")[:160],
                         price=price,
                         source=source,
                         url=entry.get("url", ""),
-                        image_url=image_url if image_url and image_url.startswith("http") else None,
+                        image_url=valid_imgs[0] if valid_imgs else (image_url if image_url and image_url.startswith("http") else None),
+                        images=valid_imgs,
                         description=entry.get("description"),
                     )
                 )

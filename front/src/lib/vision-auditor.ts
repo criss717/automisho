@@ -21,7 +21,16 @@ export async function auditSingleCarImage(
 ): Promise<VisualAudit | null> {
   if (!imageUrl || !imageUrl.startsWith("http")) return null;
   const lowerUrl = imageUrl.toLowerCase();
-  if (lowerUrl.includes(".svg") || lowerUrl.includes("logo") || lowerUrl.includes("placeholder")) {
+  if (
+    lowerUrl.endsWith(".mp4") ||
+    lowerUrl.includes(".mp4?") ||
+    lowerUrl.endsWith(".webm") ||
+    lowerUrl.endsWith(".mov") ||
+    lowerUrl.endsWith(".m3u8") ||
+    lowerUrl.includes(".svg") ||
+    lowerUrl.includes("logo") ||
+    lowerUrl.includes("placeholder")
+  ) {
     return null;
   }
 
@@ -44,7 +53,13 @@ export async function auditSingleCarImage(
 
     if (!imgRes.ok) return null;
     const rawContentType = (imgRes.headers.get("content-type") || "image/jpeg").toLowerCase();
-    if (rawContentType.includes("svg") || rawContentType.includes("html") || rawContentType.includes("xml")) {
+    if (
+      rawContentType.includes("svg") ||
+      rawContentType.includes("html") ||
+      rawContentType.includes("xml") ||
+      rawContentType.includes("video") ||
+      rawContentType.includes("text")
+    ) {
       return null;
     }
     const supportedTypes = ["image/jpeg", "image/png", "image/gif", "image/webp"];
@@ -167,23 +182,11 @@ Responde ÚNICAMENTE un JSON válido con este formato:
  * Runs vision audits in bounded batches (default 2 at a time) to avoid
  * provider rate limits while keeping total latency acceptable.
  */
-async function auditInBatches(
-  cars: CarResult[],
-  auditOne: (car: CarResult) => Promise<CarResult>,
-  batchSize: number
-): Promise<PromiseSettledResult<CarResult>[]> {
-  const results: PromiseSettledResult<CarResult>[] = [];
-  for (let i = 0; i < cars.length; i += batchSize) {
-    const batch = cars.slice(i, i + batchSize);
-    const settled = await Promise.allSettled(batch.map(auditOne));
-    results.push(...settled);
-  }
-  return results;
-}
-
 /**
- * Audits a batch of cars with bounded concurrency (2 at a time),
- * enriching them with visual inspection data.
+ * Audits cars with Dynamic Pool Refill:
+ * If an audited car is rejected by visual criteria (color mismatch, damage, doors),
+ * immediately audits the next candidate from the 50-80 car pool to fill the quota,
+ * guaranteeing the user gets targetCount top-quality, verified cars.
  */
 export async function auditCarVisuals(
   cars: CarResult[],
@@ -194,24 +197,74 @@ export async function auditCarVisuals(
   const opts: VisionAuditOptions =
     typeof options === "number" ? { requestedDoors: options } : options || {};
   const requestedDoors = opts.requestedDoors;
-
-  // Dynamically audit enough candidates to satisfy requested count (default 6-8)
   const targetCount = opts.targetCount || 6;
-  const auditBudget = Math.min(cars.length, Math.max(5, targetCount));
-  const candidatePool = cars.slice(0, auditBudget);
-  const remainingCars = cars.slice(auditBudget);
+
+  // Maximum total audits allowed to prevent unbounded latency
+  const maxAudits = Math.min(cars.length, Math.max(targetCount * 2, targetCount + 4));
+
+  const validCandidates: CarResult[] = [];
+  const unauditedCandidates: CarResult[] = [];
+  const rejectedCandidates: CarResult[] = [];
+  const pendingPool = [...cars];
+  let auditsPerformed = 0;
 
   const auditOne = async (car: CarResult): Promise<CarResult> => {
-    if (!car.image_url) return car;
+    // 1. Collect all candidate image URLs: image_url + images gallery
+    const candidateUrls: string[] = [];
+    if (car.image_url && typeof car.image_url === "string") {
+      candidateUrls.push(car.image_url.trim());
+    }
+    if (Array.isArray(car.images)) {
+      for (const img of car.images) {
+        if (typeof img === "string") {
+          const trimmed = img.trim();
+          if (trimmed.startsWith("http") && !candidateUrls.includes(trimmed)) {
+            candidateUrls.push(trimmed);
+          }
+        }
+      }
+    }
 
-    const visualAudit = await auditSingleCarImage(car.image_url, car.title, {
-      ...opts,
-      price: car.price,
-      description: car.description,
-    });
+    if (candidateUrls.length === 0) return car;
+
+    // 2. Try candidate images until we get a successful visual audit
+    // Avoid video streams or video files
+    let visualAudit: VisualAudit | null = null;
+    let successfulImgUrl: string | null = null;
+
+    for (const url of candidateUrls.slice(0, 3)) {
+      const lower = url.toLowerCase();
+      if (
+        lower.endsWith(".mp4") ||
+        lower.includes(".mp4?") ||
+        lower.endsWith(".webm") ||
+        lower.endsWith(".mov") ||
+        lower.endsWith(".m3u8") ||
+        lower.includes("video-thumb-play") ||
+        lower.includes("play-button")
+      ) {
+        continue;
+      }
+
+      visualAudit = await auditSingleCarImage(url, car.title, {
+        ...opts,
+        price: car.price,
+        description: car.description,
+      });
+
+      if (visualAudit) {
+        successfulImgUrl = url;
+        break;
+      }
+    }
+
     if (!visualAudit) return car;
 
-    const enrichedCar = { ...car, visualAudit };
+    const enrichedCar = {
+      ...car,
+      image_url: successfulImgUrl || car.image_url,
+      visualAudit,
+    };
     const pros = [...(enrichedCar.pros || [])];
     const cons = [...(enrichedCar.cons || [])];
 
@@ -270,27 +323,34 @@ export async function auditCarVisuals(
     return enrichedCar;
   };
 
-  const settled = await auditInBatches(candidatePool, auditOne, 2);
-  const auditedPool = settled.map((res, i) => (res.status === "fulfilled" ? res.value : candidatePool[i]));
+  // Loop in batches of 2 until we reach targetCount valid cars or hit maxAudits
+  const batchSize = 2;
+  while (validCandidates.length < targetCount && pendingPool.length > 0 && auditsPerformed < maxAudits) {
+    const toAuditCount = Math.min(batchSize, targetCount - validCandidates.length, pendingPool.length);
+    const currentBatch = pendingPool.splice(0, toAuditCount);
+    auditsPerformed += currentBatch.length;
 
-  // Re-sort: cars matching user criteria first, then by score
-  auditedPool.sort((a, b) => {
-    const aMatch = a.visualAudit?.userCriteriaMatch === true ? 1 : a.visualAudit?.userCriteriaMatch === false ? -1 : 0;
-    const bMatch = b.visualAudit?.userCriteriaMatch === true ? 1 : b.visualAudit?.userCriteriaMatch === false ? -1 : 0;
-    if (aMatch !== bMatch) return bMatch - aMatch;
-    return (Number(b.score) || 0) - (Number(a.score) || 0);
-  });
+    const settled = await Promise.allSettled(currentBatch.map(auditOne));
+    for (let i = 0; i < settled.length; i++) {
+      const res = settled[i];
+      const car = res.status === "fulfilled" ? res.value : currentBatch[i];
+      const audit = car.visualAudit;
 
-  // If user requested 3 doors, re-filter if vision confirmed 5 doors and we have other 3p cars
-  let finalCars = [...auditedPool, ...remainingCars];
-  if (requestedDoors === 3) {
-    const verified3pCars = finalCars.filter(
-      (c) => !c.visualAudit || c.visualAudit.doorsDetected !== 5
-    );
-    if (verified3pCars.length > 0) {
-      finalCars = verified3pCars;
+      if (!audit) {
+        unauditedCandidates.push(car);
+      } else if (audit.userCriteriaMatch === false) {
+        console.info(`[vision-auditor] Candidate rejected by vision ('${car.title}'): ${audit?.rejectionReason || "Criteria mismatch"}. Refilling pool.`);
+        rejectedCandidates.push(car);
+      } else {
+        validCandidates.push(car);
+      }
     }
   }
 
+  // Sort valid candidates by score descending
+  validCandidates.sort((a, b) => (Number(b.score) || 0) - (Number(a.score) || 0));
+
+  // Assemble final cars: valid candidates first, then remaining uninspected/unaudited cars to fill any deficit, then rejected at the tail
+  const finalCars = [...validCandidates, ...unauditedCandidates, ...pendingPool, ...rejectedCandidates];
   return finalCars;
 }

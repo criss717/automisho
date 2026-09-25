@@ -70,6 +70,7 @@ async def _scrape_via_browser_worker(req: ScrapeRequest) -> list[CarResult] | No
                 fuel=item.get("fuel"),
                 url=item.get("url"),
                 image_url=item.get("image_url"),
+                images=item.get("images") or ([item.get("image_url")] if item.get("image_url") else []),
                 description=item.get("description"),
                 source=item.get("source") or "browser",
             ))
@@ -345,9 +346,9 @@ def is_strictly_4_or_5_door(title: str, url: str = "") -> bool:
 
 @router.post("", response_model=ScrapeResponse)
 async def scrape_cars(req: ScrapeRequest):
-    """Scrape car listings from the selected source (standard 50 / deep 100)."""
-    # Clamp max_results 1..100
-    req.max_results = max(1, min(req.max_results, 100))
+    """Scrape car listings at high speed across all portals (target 50-80 cars in seconds)."""
+    # Clamp max_results 1..100 (default 50)
+    req.max_results = max(1, min(req.max_results or 50, 100))
 
     if not req.doors:
         m_doors = re.search(r"\b([2-5])\s*(?:p|puertas?)\b", req.query, re.IGNORECASE)
@@ -355,159 +356,39 @@ async def scrape_cars(req: ScrapeRequest):
             req.doors = int(m_doors.group(1))
             logger.info(f"[scrape] Auto-detected doors requirement: {req.doors} from query '{req.query}'")
 
-    # Prefer the real Playwright browser worker; fall back or supplement with httpx below.
-    browser_results = await _scrape_via_browser_worker(req)
-    browser_sliced: list[CarResult] = []
-    if browser_results:
-        browser_sliced = _apply_post_filters(browser_results, req)
-        if len(browser_sliced) >= 6:
-            logger.info(f"[scrape] browser worker aggregated {len(browser_sliced)}/{len(browser_results)}")
-            return ScrapeResponse(
-                results=browser_sliced,
-                source="browser",
-                query=req.query,
-                total=len(browser_sliced),
-            )
-        logger.warning(
-            f"[scrape] browser worker results low ({len(browser_sliced)}/{len(browser_results)}); supplementing with httpx flow."
-        )
+    # 1. Run high-speed concurrent HTTP scrapers (AutoScout24, Coches.net, Wallapop, Milanuncios)
+    tasks = [
+        _scrape_with_retry(_scrape_autoscout24, req),
+        _scrape_with_retry(_scrape_cochesnet, req),
+        _scrape_with_retry(_scrape_wallapop, req),
+        _scrape_with_retry(_scrape_milanuncios, req),
+    ]
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+    flat: list[CarResult] = []
+    for r in results:
+        if isinstance(r, list):
+            flat.extend(r)
+        elif isinstance(r, Exception):
+            logger.error(f"[scrape] source failed: {r}")
 
-    if req.source in ("auto", "deep") or browser_sliced:
-        tasks = [
-            _scrape_with_retry(_scrape_autoscout24, req),
-            _scrape_with_retry(_scrape_cochesnet, req),
-            _scrape_with_retry(_scrape_wallapop, req),
-            _scrape_with_retry(_scrape_milanuncios, req),
-        ]
-        results = await asyncio.gather(*tasks, return_exceptions=True)
-        flat: list[CarResult] = list(browser_sliced)
-        for r in results:
-            if isinstance(r, list):
-                flat.extend(r)
-            elif isinstance(r, Exception):
-                logger.error(f"[scrape] source failed: {r}")
+    # 2. If HTTP yielded under 25 cars, try browser worker with short timeout
+    if len(flat) < 25:
+        try:
+            bw_results = await asyncio.wait_for(_scrape_via_browser_worker(req), timeout=15.0)
+            if bw_results:
+                flat.extend(bw_results)
+        except Exception as e:
+            logger.debug(f"[scrape] browser worker supplement timed out or skipped: {e}")
 
-        # Strict price bounds filter (eliminates sponsored ads that ignore query params)
-        if req.max_price:
-            flat = [c for c in flat if (c.price and c.price <= req.max_price * 1.05)]
-        if req.min_price:
-            flat = [c for c in flat if (c.price and c.price >= req.min_price * 0.95)]
-
-        # Strict door count filter if requested
-        if req.doors == 3:
-            flat = [c for c in flat if is_strictly_3_door(c.title, c.url or "")]
-        elif req.doors in (4, 5):
-            flat = [c for c in flat if is_strictly_4_or_5_door(c.title, c.url or "")]
-
-        # Discard incomplete or unpriced skeleton cards
-        flat = [
-            c for c in flat
-            if c.title and c.title.strip() not in ("Sin título", "Vehículo sin título", "Vehículo en Wallapop", "Sin titulo")
-            and c.price and c.price > 0
-        ]
-
-        # Deduplicate by url/title
-        seen: set[str] = set()
-        deduped: list[CarResult] = []
-        for c in flat:
-            key = c.url or c.title
-            if key and key not in seen:
-                seen.add(key)
-                deduped.append(c)
-
-        # Fair round-robin aggregation across sources
-        by_source: dict[str, list[CarResult]] = {}
-        for c in deduped:
-            src = c.source or "other"
-            by_source.setdefault(src, []).append(c)
-
-        balanced: list[CarResult] = []
-        max_len = max((len(lst) for lst in by_source.values()), default=0)
-        for i in range(max_len):
-            for src_list in by_source.values():
-                if i < len(src_list):
-                    balanced.append(src_list[i])
-
-        sliced = balanced[: req.max_results]
-        logger.info(f"[scrape] {req.source} aggregated {len(sliced)}/{len(flat)} from {len(by_source)} sources (deduped {len(deduped)})")
-        return ScrapeResponse(
-            results=sliced,
-            source=req.source,
-            query=req.query,
-            total=len(sliced),
-        )
-    elif req.source in ("fast", "standard"):
-        # Fast / Standard mode: AutoScout24 + Coches.net (up to 50 vehicles, ~2.5s)
-        tasks = [
-            _scrape_with_retry(_scrape_autoscout24, req),
-            _scrape_with_retry(_scrape_cochesnet, req),
-        ]
-        results = await asyncio.gather(*tasks, return_exceptions=True)
-        flat: list[CarResult] = []
-        for r in results:
-            if isinstance(r, list):
-                flat.extend(r)
-
-        # Strict price bounds filter
-        if req.max_price:
-            flat = [c for c in flat if (c.price and c.price <= req.max_price * 1.05)]
-        if req.min_price:
-            flat = [c for c in flat if (c.price and c.price >= req.min_price * 0.95)]
-
-        # Strict door count filter if requested
-        if req.doors == 3:
-            flat = [c for c in flat if is_strictly_3_door(c.title, c.url or "")]
-        elif req.doors in (4, 5):
-            flat = [c for c in flat if is_strictly_4_or_5_door(c.title, c.url or "")]
-
-        # Discard incomplete or unpriced skeleton cards
-        flat = [
-            c for c in flat
-            if c.title and c.title.strip() not in ("Sin título", "Vehículo sin título", "Vehículo en Wallapop", "Sin titulo")
-            and c.price and c.price > 0
-        ]
-
-        seen: set[str] = set()
-        deduped: list[CarResult] = []
-        for c in flat:
-            key = c.url or c.title
-            if key and key not in seen:
-                seen.add(key)
-                deduped.append(c)
-
-        # Fair round-robin
-        by_source: dict[str, list[CarResult]] = {}
-        for c in deduped:
-            src = c.source or "other"
-            by_source.setdefault(src, []).append(c)
-
-        balanced: list[CarResult] = []
-        max_len = max((len(lst) for lst in by_source.values()), default=0)
-        for i in range(max_len):
-            for src_list in by_source.values():
-                if i < len(src_list):
-                    balanced.append(src_list[i])
-
-        sliced = balanced[: req.max_results]
-        logger.info(f"[scrape] standard aggregated {len(sliced)} from {len(by_source)} sources")
-        return ScrapeResponse(
-            results=sliced,
-            source="standard",
-            query=req.query,
-            total=len(sliced),
-        )
-    else:
-        single = await _scrape_with_retry(_scrape_source, req)
-        if isinstance(single, Exception):
-            logger.error(f"[scrape] single source failed: {single}")
-            single = []
-        sliced = single[: req.max_results] if isinstance(single, list) else []
-        return ScrapeResponse(
-            results=sliced,
-            source=req.source,
-            query=req.query,
-            total=len(sliced),
-        )
+    # 3. Apply post-filters (price bounds, excluded makes, doors, dedup, balance)
+    sliced = _apply_post_filters(flat, req)
+    logger.info(f"[scrape] High-speed aggregator yielded {len(sliced)}/{len(flat)} cars")
+    return ScrapeResponse(
+        results=sliced,
+        source="aggregated",
+        query=req.query,
+        total=len(sliced),
+    )
 
 
 async def _scrape_with_retry(fn, req, retries: int = 1):
@@ -592,7 +473,7 @@ async def _scrape_autoscout24(req: ScrapeRequest) -> list[CarResult]:
             # Fallback without strainer (structure changed)
             soup = BeautifulSoup(resp.text, "lxml")
             items = soup.select(".cldt-summary-full-item")
-        logger.info(f"AutoScout24: found {len(items)} items for url {url} params {params} known_parts={known_parts}")
+        logger.info(f"AutoScout24: found {len(items)} items for url {url} params {params} wanted_makes={wanted_makes}")
 
         results: list[CarResult] = []
         # Respect max_results already clamped
@@ -735,7 +616,7 @@ async def _scrape_cochesnet(req: ScrapeRequest) -> list[CarResult]:
     if not items:
         soup = BeautifulSoup(resp.text, "lxml")
         items = soup.select(".mt-CardAd")
-    logger.info(f"coches.net: found {len(items)} items for Keywords={clean_query} (has_known={has_known})")
+    logger.info(f"coches.net: found {len(items)} items for Keywords={params.get('Keywords', '')} (has_known={bool(wanted_makes)})")
 
     results: list[CarResult] = []
     limit = min(len(items), req.max_results or 12)
