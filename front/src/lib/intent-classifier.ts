@@ -3,7 +3,7 @@ import { z } from "zod";
 import { getCommandCodeModel, isCommandCodeConfigured } from "./ai";
 
 export const UserIntentSchema = z.object({
-  isSearch: z.boolean().default(true).describe("true si el usuario solicita buscar, ver opciones, comparar o comprar vehículos en el mercado"),
+  isSearch: z.boolean().default(false).describe("true SOLO si el último mensaje pide explícitamente buscar, ver, listar o comparar coches en el mercado. false si el mensaje es una pregunta, opinión técnica sobre un coche ya mencionado, consejos de compra, regateo o mecánica."),
   query: z.string().default("").describe("Marca y modelo específicos si los pidió (ej: 'seat ibiza', 'golf') o vacío '' si busca por requisitos generales (como viajes largos, potencia, etc.)"),
   wantedMakes: z.array(z.string()).default([]).describe("Marcas que el usuario solicita o desea incluir (ej: ['seat', 'volkswagen', 'ford']). Si el usuario dice 'sumamos peugeot', pon peugeot aquí."),
   excludedMakes: z.array(z.string()).default([]).describe("Marcas que el usuario PROHÍBE o descarta (ej: 'no opel ni peugeot ni chevrolet' -> ['opel', 'peugeot', 'chevrolet'])."),
@@ -46,26 +46,26 @@ export async function classifyUserIntent(
     targetCount: null,
   };
 
-  if (!isCommandCodeConfigured()) {
-    return defaultIntent;
-  }
+  if (isCommandCodeConfigured()) {
+    // Format conversation history for context
+    const conversationHistory = messages.map((m) => {
+      const text =
+        m.content ||
+        (m.parts as Array<{ type: string; text?: string }>)
+          ?.filter((p) => p.type === "text")
+          .map((p) => p.text)
+          .join("") ||
+        "";
+      return `${m.role.toUpperCase()}: ${text}`;
+    }).join("\n");
 
-  // Format conversation history for context
-  const conversationHistory = messages.map((m) => {
-    const text =
-      m.content ||
-      (m.parts as Array<{ type: string; text?: string }>)
-        ?.filter((p) => p.type === "text")
-        .map((p) => p.text)
-        .join("") ||
-      "";
-    return `${m.role.toUpperCase()}: ${text}`;
-  }).join("\n");
-
-  const prompt = `Analiza la siguiente conversación entre un usuario y AutoMisho (asistente de compra de coches en España).
+    const prompt = `Analiza la siguiente conversación entre un usuario y AutoMisho (asistente de compra de coches en España).
 Tu tarea es clasificar la intención y extraer los filtros estructurados del usuario teniendo en cuenta TODO el historial de la conversación.
 
 REGLAS CRÍTICAS DE EXTRACCIÓN:
+0. "isSearch":
+   - Debe ser TRUE si el último mensaje del usuario solicita encontrar, buscar, ver opciones o listar vehículos en venta (ej: "dame los mejores coches", "busca suvs de menos de 8000€", "qué hay por 3000€", "quiero ver opciones diésel").
+   - Debe ser FALSE si el último mensaje es una PREGUNTA, duda, opinión o comentario conversacional sobre un coche o tema automotriz ya conversado (ej: "¿y el lada no es una marca muy random?", "¿qué opinas del motor?", "¿cuánto consume?", "¿es caro de mantener?", "¿cómo le hablo al vendedor?", "tienen etiqueta ambiental?"). En estos casos el usuario NO pide una nueva búsqueda de mercado: isSearch DEBE ser false.
 1. "query": Pon ÚNICAMENTE marca y modelo concretos (ej: "seat leon", "golf"). Si el usuario describe necesidades generales ("para viajes largos", "más de 80cv", "barato"), deja "query" vacío (""). NUNCA metas frases conversacionales ni negaciones en query.
 2. "excludedMakes": Marcas que el usuario explícitamente descartó o dijo que NO quiere (ej: "no opel ni peugeot ni chevrolet" -> ["opel", "peugeot", "chevrolet"]).
 3. "wantedMakes": Si el usuario pide marcas concretas o si en un mensaje posterior dice "sumamos peugeot" o "incluye peugeot", retira peugeot de excludedMakes y ponlo en wantedMakes. NUNCA tomes palabras gramaticales (como "los", "las", "el", "coche", "rojos") como marcas.
@@ -78,64 +78,79 @@ Historial de conversación:
 ${conversationHistory}
 `;
 
-  try {
-    const model = getCommandCodeModel("deepseek/deepseek-v4-flash");
-    const { object } = await generateObject({
-      model,
-      schema: UserIntentSchema,
-      prompt,
-      abortSignal: AbortSignal.timeout(25000),
-    });
-    return object;
-  } catch (err) {
-    console.warn("[intent-classifier] LLM classification error, using fallback:", err);
-    // Graceful fallback for essential params if LLM timed out
-    const lastMsg = messages[messages.length - 1];
-    const lastText =
-      lastMsg?.content ||
-      (lastMsg?.parts as Array<{ type: string; text?: string }>)
-        ?.filter((p) => p.type === "text")
-        .map((p) => p.text)
-        .join("") ||
-      "";
-    const lastLower = lastText.toLowerCase();
-    const priceMatch = lastText.match(/(\d[\d.,]*)\s*(?:€|euros?|k)/i);
-    const maxP = priceMatch ? parseInt(priceMatch[1].replace(/[.,]/g, ""), 10) : null;
-    const fallbackExcluded: string[] = [];
-    if (/opel/i.test(lastLower) && /no|sin|menos/i.test(lastLower)) fallbackExcluded.push("opel");
-    if (/peugeot|pegout/i.test(lastLower) && /no|sin|menos/i.test(lastLower)) fallbackExcluded.push("peugeot");
-    if (/chevrolet/i.test(lastLower) && /no|sin|menos/i.test(lastLower)) fallbackExcluded.push("chevrolet");
-    const fallbackColors: string[] = [];
-    if (/blanco/i.test(lastLower)) fallbackColors.push("blanco");
-    if (/negro/i.test(lastLower)) fallbackColors.push("negro");
-    if (/rojo/i.test(lastLower)) fallbackColors.push("rojo");
-    if (/azul/i.test(lastLower)) fallbackColors.push("azul");
-    if (/gris/i.test(lastLower)) fallbackColors.push("gris");
-
-    const countMatch = lastText.match(/\b(?:los|las)?\s*(diez|dieci|cinco|tres|cuatro|seis|siete|ocho|nueve|\d{1,2})\s*(?:mejores|opciones|primeros|coches|vehiculos|candidatos)?\b/i);
-    let fallbackCount: number | null = null;
-    if (countMatch) {
-      const numStr = countMatch[1].toLowerCase();
-      const wordToNum: Record<string, number> = {
-        diez: 10,
-        cinco: 5,
-        tres: 3,
-        cuatro: 4,
-        seis: 6,
-        siete: 7,
-        ocho: 8,
-        nueve: 9,
-      };
-      fallbackCount = wordToNum[numStr] || parseInt(numStr, 10) || null;
+    try {
+      const model = getCommandCodeModel("deepseek/deepseek-v4-flash");
+      const { object } = await generateObject({
+        model,
+        schema: UserIntentSchema,
+        prompt,
+        abortSignal: AbortSignal.timeout(25000),
+      });
+      return object;
+    } catch (err) {
+      console.warn("[intent-classifier] LLM classification error, using fallback:", err);
     }
-
-    return {
-      ...defaultIntent,
-      isSearch: /(?:coche|coches|opciones|busco|quiero|viaje|presupuesto)/i.test(lastText),
-      maxPrice: maxP && maxP > 100 ? maxP : null,
-      excludedMakes: fallbackExcluded,
-      colors: fallbackColors,
-      targetCount: fallbackCount,
-    };
   }
+
+  // Robust deterministic fallback (offline or LLM error)
+  const lastMsg = messages[messages.length - 1];
+  const lastText =
+    lastMsg?.content ||
+    (lastMsg?.parts as Array<{ type: string; text?: string }>)
+      ?.filter((p) => p.type === "text")
+      .map((p) => p.text)
+      .join("") ||
+    "";
+  const lastLower = lastText.toLowerCase();
+  const priceMatch = lastText.match(/(\d[\d.,]*)\s*(?:€|euros?|k)/i);
+  const maxP = priceMatch ? parseInt(priceMatch[1].replace(/[.,]/g, ""), 10) : null;
+  const fallbackExcluded: string[] = [];
+  if (/opel/i.test(lastLower) && /no|sin|menos/i.test(lastLower)) fallbackExcluded.push("opel");
+  if (/peugeot|pegout/i.test(lastLower) && /no|sin|menos/i.test(lastLower)) fallbackExcluded.push("peugeot");
+  if (/chevrolet/i.test(lastLower) && /no|sin|menos/i.test(lastLower)) fallbackExcluded.push("chevrolet");
+  const fallbackColors: string[] = [];
+  if (/blanco/i.test(lastLower)) fallbackColors.push("blanco");
+  if (/negro/i.test(lastLower)) fallbackColors.push("negro");
+  if (/rojo/i.test(lastLower)) fallbackColors.push("rojo");
+  if (/azul/i.test(lastLower)) fallbackColors.push("azul");
+  if (/gris/i.test(lastLower)) fallbackColors.push("gris");
+
+  let fallbackBodyType: string | null = null;
+  if (/\b(?:suv|todocamino|4x4|crossover)\b/i.test(lastLower)) fallbackBodyType = "suv";
+  else if (/\b(?:cabrio|descapotable)\b/i.test(lastLower)) fallbackBodyType = "cabrio";
+  else if (/\b(?:familiar|station|wagon|sw)\b/i.test(lastLower)) fallbackBodyType = "familiar";
+  else if (/\b(?:berlina|sedan|sedán)\b/i.test(lastLower)) fallbackBodyType = "berlina";
+
+  const countMatch = lastText.match(/\b(?:los|las)?\s*(diez|dieci|cinco|tres|cuatro|seis|siete|ocho|nueve|\d{1,2})\s*(?:mejores|opciones|primeros|coches|vehiculos|candidatos)?\b/i);
+  let fallbackCount: number | null = null;
+  if (countMatch) {
+    const numStr = countMatch[1].toLowerCase();
+    const wordToNum: Record<string, number> = {
+      diez: 10,
+      cinco: 5,
+      tres: 3,
+      cuatro: 4,
+      seis: 6,
+      siete: 7,
+      ocho: 8,
+      nueve: 9,
+    };
+    fallbackCount = wordToNum[numStr] || parseInt(numStr, 10) || null;
+  }
+
+  const isQuestionOrInquiry =
+    /^[¿?]|(?:qu[eé]\s+tal|qu[eé]\s+opinas?|es\s+bueno|es\s+fiable|es\s+una\s+marca|no\s+e\s+|no\s+es|por\s*qu[eé]|c[oó]mo\s+le|cu[aá]nto\s+consume|vale\s+la\s+pena)/i.test(lastText) ||
+    /\?$/.test(lastText.trim());
+  const isExplicitSearch =
+    /(?:busca|b[uú]scame|encuentra|dame|mu[eé]strame|ver\s+opciones|quiero\s+(?:un\s+)?coche|opciones\s+de\s+coches|mejores\s+opciones|suv|suvs)/i.test(lastText);
+
+  return {
+    ...defaultIntent,
+    isSearch: isExplicitSearch && !isQuestionOrInquiry,
+    maxPrice: maxP && maxP > 100 ? maxP : null,
+    excludedMakes: fallbackExcluded,
+    colors: fallbackColors,
+    targetCount: fallbackCount,
+    bodyType: fallbackBodyType,
+  };
 }

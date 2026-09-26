@@ -1,7 +1,35 @@
 import assert from 'node:assert';
 import { auditCarVisuals, auditSingleCarImage } from '../lib/vision-auditor';
 import { enrichCarResult } from '../lib/chat-helpers';
+import { classifyUserIntent } from '../lib/intent-classifier';
 import type { CarResult } from '../types';
+
+async function testIntentClassificationRouting() {
+  console.log('Testing Intent Classification Routing (Search vs Conversation)...');
+
+  // 1. Question about an already recommended car -> isSearch must be false
+  const questionIntent = await classifyUserIntent([
+    { role: 'assistant', content: 'Te recomiendo el LADA 4x4 por 4.900€' },
+    { role: 'user', content: 'y el lada no e suna marca muy random es del 2013 pero parece un estilo viejo y tiene apenas 50 k kilometros' }
+  ]);
+  assert.strictEqual(
+    questionIntent.isSearch,
+    false,
+    `Conversational question should yield isSearch=false, got ${questionIntent.isSearch}`
+  );
+
+  // 2. Explicit car search -> isSearch must be true
+  const searchIntent = await classifyUserIntent([
+    { role: 'user', content: 'dame las mejores opciones de suvs de menos de 8000 euros' }
+  ]);
+  assert.strictEqual(
+    searchIntent.isSearch,
+    true,
+    `Explicit car search should yield isSearch=true, got ${searchIntent.isSearch}`
+  );
+
+  console.log('✓ Intent Classification Routing verified successfully!');
+}
 
 async function testMulticriteriaPreRanking() {
   console.log('Testing Multicriteria Pre-ranking Matrix...');
@@ -181,6 +209,7 @@ async function testVideoFallbackLogic() {
 }
 
 async function runAll() {
+  await testIntentClassificationRouting();
   await testMulticriteriaPreRanking();
   await testPoolFusionLogic();
   await testVideoFallbackLogic();

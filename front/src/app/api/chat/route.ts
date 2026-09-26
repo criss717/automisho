@@ -29,7 +29,9 @@ async function searchBackend(
   minPrice?: number,
   doors?: number,
   excludedMakes?: string[],
-  makes?: string[]
+  makes?: string[],
+  bodyType?: string | null,
+  fuel?: string | null
 ) {
   const controller = new AbortController();
   const timeoutMs = 85000;
@@ -47,6 +49,8 @@ async function searchBackend(
         doors,
         excluded_makes: excludedMakes,
         makes,
+        body_type: bodyType || undefined,
+        fuel: fuel || undefined,
       }),
       signal: controller.signal,
     });
@@ -61,11 +65,13 @@ async function searchBackend(
   }
 }
 
-async function agentSearchBackend(userText: string, maxPrice?: number) {
+async function agentSearchBackend(userText: string, maxPrice?: number, bodyType?: string | null) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 75000);
   try {
-    const promptText = maxPrice ? `${userText} (PRESUPUESTO MÁXIMO ESTRICTO: ${maxPrice}€)` : userText;
+    let promptText = userText;
+    if (maxPrice) promptText += ` (PRESUPUESTO MÁXIMO ESTRICTO: ${maxPrice}€)`;
+    if (bodyType) promptText += ` (TIPO DE CARROCERÍA REQUERIDO: ${bodyType})`;
     const res = await fetch(`${BACKEND_URL}/agent/chat`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -192,8 +198,8 @@ export async function POST(req: Request) {
 
       // Agent is primary; scrape backend runs as safe structured fallback
       const [agentSettled, scrapeSettled] = await Promise.allSettled([
-        agentSearchBackend(userText, maxPrice),
-        searchBackend(cleanScrapeQuery, maxPrice, minPrice, doors, excludedMakes, wantedMakes),
+        agentSearchBackend(userText, maxPrice, intent.bodyType),
+        searchBackend(cleanScrapeQuery, maxPrice, minPrice, doors, excludedMakes, wantedMakes, intent.bodyType, intent.fuel),
       ]);
       const agentResults =
         agentSettled.status === "fulfilled" ? agentSettled.value : null;

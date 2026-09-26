@@ -443,6 +443,9 @@ async def _scrape_autoscout24(req: ScrapeRequest) -> list[CarResult]:
     wanted_makes, excluded_makes = _extract_makes_intent(req.query)
 
     # URL builder robust with fallback to keywords param for ambiguous cases
+    if req.body_type and "keywords" not in params:
+        params["keywords"] = req.body_type
+
     if len(clean_parts) >= 2 and clean_parts[0] in {"suv", "berlina", "utilitario"} and clean_parts[1] in {"familiar", "compacto"}:
         url = "https://www.autoscout24.es/lst"
         params["keywords"] = req.query
@@ -557,8 +560,13 @@ async def _scrape_cochesnet(req: ScrapeRequest) -> list[CarResult]:
 
     wanted_makes, excluded_makes = _extract_makes_intent(clean_query)
     params: dict[str, str] = {}
+    kw_parts = []
     if wanted_makes:
-        params["Keywords"] = " ".join(wanted_makes)
+        kw_parts.extend(wanted_makes)
+    if req.body_type:
+        kw_parts.append(req.body_type)
+    if kw_parts:
+        params["Keywords"] = " ".join(kw_parts)
     else:
         # If no positive make, send Keywords="" to search all makes under price
         params["Keywords"] = ""
@@ -684,8 +692,13 @@ async def _scrape_wallapop(req: ScrapeRequest) -> list[CarResult]:
     lat, lon = _city_coords(req.query)
 
     clean_kw = _clean_keywords(req.query)
+    wp_kw_parts = []
+    if clean_kw:
+        wp_kw_parts.append(clean_kw)
+    if req.body_type:
+        wp_kw_parts.append(req.body_type)
     params = {
-        "keywords": clean_kw if clean_kw else "",
+        "keywords": " ".join(wp_kw_parts),
         "category_ids": "100",  # Cars
         "latitude": str(lat),
         "longitude": str(lon),
@@ -885,6 +898,12 @@ async def _scrape_milanuncios(req: ScrapeRequest) -> list[CarResult]:
     elif clean_query and clean_query == req.query and _has_known_make(clean_query):
         # If original query equals clean and has known make, also use s
         params["s"] = clean_query
+
+    if req.body_type:
+        if "s" in params:
+            params["s"] = f"{params['s']} {req.body_type}".strip()
+        else:
+            params["s"] = req.body_type
 
     # Some Milanuncios search URLs use path with keywords
     url = base_url

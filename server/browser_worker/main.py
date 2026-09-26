@@ -626,12 +626,17 @@ async def _scrape_source(
     doors: Optional[int] = None,
     makes: Optional[List[str]] = None,
     excluded_makes: Optional[List[str]] = None,
+    body_type: Optional[str] = None,
 ) -> List[CarItem]:
     """Scrapes one portal. Returns real listings only; empty list on any failure."""
     if not _pool_active():
         logger.warning("[BrowserWorker] Chromium pool unavailable; skipping source '%s'.", source)
         return []
     keywords = _clean_query_for_portal(query, makes=makes, excluded_makes=excluded_makes)
+    if not keywords and body_type:
+        keywords = body_type
+    elif keywords and body_type:
+        keywords = f"{keywords} {body_type}"
     url = _build_portal_url(source, keywords, max_price, min_price, doors)
     if not url:
         logger.warning("[BrowserWorker] Unknown source '%s'; skipping.", source)
@@ -748,6 +753,7 @@ async def search_portal(req: SearchRequest):
                 req.doors,
                 makes=req.makes,
                 excluded_makes=req.excluded_makes,
+                body_type=req.body_type,
             )
             for source in sources
         ]
