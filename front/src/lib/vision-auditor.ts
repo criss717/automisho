@@ -15,57 +15,76 @@ export interface VisionAuditOptions {
  * Evaluates doors, color, body style, condition, flip/resale potential, and user query match.
  */
 export async function auditSingleCarImage(
-  imageUrl: string,
+  imageUrlOrUrls: string | string[],
   carTitle: string,
   options?: VisionAuditOptions | number
 ): Promise<VisualAudit | null> {
-  if (!imageUrl || !imageUrl.startsWith("http")) return null;
-  const lowerUrl = imageUrl.toLowerCase();
-  if (
-    lowerUrl.endsWith(".mp4") ||
-    lowerUrl.includes(".mp4?") ||
-    lowerUrl.endsWith(".webm") ||
-    lowerUrl.endsWith(".mov") ||
-    lowerUrl.endsWith(".m3u8") ||
-    lowerUrl.includes(".svg") ||
-    lowerUrl.includes("logo") ||
-    lowerUrl.includes("placeholder")
-  ) {
-    return null;
-  }
+  const urls = (Array.isArray(imageUrlOrUrls) ? imageUrlOrUrls : [imageUrlOrUrls])
+    .filter((u): u is string => typeof u === "string" && u.startsWith("http"))
+    .filter((u) => {
+      const lower = u.toLowerCase();
+      return (
+        !lower.endsWith(".mp4") &&
+        !lower.includes(".mp4?") &&
+        !lower.endsWith(".webm") &&
+        !lower.endsWith(".mov") &&
+        !lower.endsWith(".m3u8") &&
+        !lower.includes(".svg") &&
+        !lower.includes("logo") &&
+        !lower.includes("placeholder")
+      );
+    });
+
+  if (urls.length === 0) return null;
 
   const opts: VisionAuditOptions =
     typeof options === "number" ? { requestedDoors: options } : options || {};
 
   try {
-    // 1. Fetch the image buffer with 12s timeout
+    // 1. Fetch up to 2 sample images in parallel with 12s timeout
     const fetchController = new AbortController();
     const fetchTimeout = setTimeout(() => fetchController.abort(), 12000);
 
-    const imgRes = await fetch(imageUrl, {
-      signal: fetchController.signal,
-      headers: {
-        "User-Agent":
-          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-      },
+    const downloadPromises = urls.slice(0, 2).map(async (u) => {
+      try {
+        const imgRes = await fetch(u, {
+          signal: fetchController.signal,
+          headers: {
+            "User-Agent":
+              "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+          },
+        });
+        if (!imgRes.ok) return null;
+        const rawContentType = (imgRes.headers.get("content-type") || "image/jpeg").toLowerCase();
+        if (
+          rawContentType.includes("svg") ||
+          rawContentType.includes("html") ||
+          rawContentType.includes("xml") ||
+          rawContentType.includes("video") ||
+          rawContentType.includes("text")
+        ) {
+          return null;
+        }
+        const supportedTypes = ["image/jpeg", "image/png", "image/gif", "image/webp"];
+        const contentType = supportedTypes.find((t) => rawContentType.includes(t.replace("image/", ""))) || "image/jpeg";
+        const arrayBuf = await imgRes.arrayBuffer();
+        return { buffer: Buffer.from(arrayBuf), contentType, url: u };
+      } catch {
+        return null;
+      }
     });
+
+    const settled = await Promise.allSettled(downloadPromises);
     clearTimeout(fetchTimeout);
 
-    if (!imgRes.ok) return null;
-    const rawContentType = (imgRes.headers.get("content-type") || "image/jpeg").toLowerCase();
-    if (
-      rawContentType.includes("svg") ||
-      rawContentType.includes("html") ||
-      rawContentType.includes("xml") ||
-      rawContentType.includes("video") ||
-      rawContentType.includes("text")
-    ) {
-      return null;
+    const validBuffers: Array<{ buffer: Buffer; contentType: string; url: string }> = [];
+    for (const res of settled) {
+      if (res.status === "fulfilled" && res.value !== null) {
+        validBuffers.push(res.value);
+      }
     }
-    const supportedTypes = ["image/jpeg", "image/png", "image/gif", "image/webp"];
-    const contentType = supportedTypes.find((t) => rawContentType.includes(t.replace("image/", ""))) || "image/jpeg";
-    const arrayBuf = await imgRes.arrayBuffer();
-    const buffer = Buffer.from(arrayBuf);
+
+    if (validBuffers.length === 0) return null;
 
     const userContext = opts.userQuery
       ? `Requisitos estrictos solicitados por el usuario: "${opts.userQuery}"`
@@ -75,22 +94,22 @@ export async function auditSingleCarImage(
       ? `\nDescripción/detalles publicados por el vendedor:\n"${opts.description.slice(0, 700)}"`
       : "";
 
-    const prompt = `Eres el Auditor Técnico Oficial de AutoMisho. Analiza conjuntamente la fotografía y el texto de este anuncio en venta ("${carTitle}"${opts.price ? `, precio: ${opts.price}` : ""}).
+    const prompt = `Eres el Auditor Técnico Oficial de AutoMisho. Analiza conjuntamente las fotografías adjuntas (${validBuffers.length} fotos: exterior e interior/puesto de mando si están disponibles) y el texto de este anuncio en venta ("${carTitle}"${opts.price ? `, precio: ${opts.price}` : ""}).
 ${userContext}${descriptionContext}
 
-Realiza una auditoría exhaustiva contrastando la imagen y la descripción del anuncio con lo que busca el usuario:
-1. "color": Color principal exterior de la carrocería visible en la foto (ej: "rojo", "negro", "blanco", "gris/plata", "azul", "verde", "amarillo", "marrón").
+Realiza una auditoría visual técnica contrastando las fotografías y la descripción del anuncio con lo que busca el usuario:
+1. "color": Color principal exterior de la carrocería visible en las fotos (ej: "rojo", "negro", "blanco", "gris/plata", "azul", "verde", "amarillo", "marrón").
 2. "bodyType": Tipo de carrocería ("descapotable/cabrio", "coupé", "utilitario/compacto", "sedán/berlina", "familiar/station wagon", "suv/monovolumen").
 3. "doors": Número de puertas laterales (3 si es utilitario 3p o coupé, 5 si es 4 puertas + portón, null si no se distingue).
 4. "verified3p": true si es 3 puertas / coupé / cabrio, false en caso contrario.
-5. "bodyCondition": Estado exterior en 1 frase (pintura, brillo de faros, abolladuras, arañazos o piezas desgastadas).
+5. "bodyCondition": Estado general en 1 frase (chapa/pintura exterior, brillo de faros, abolladuras, y estado de volante/tapicería interior si se muestra).
 6. "userCriteriaMatch": true si cumple fielmente lo que busca el usuario. false si viola CUALQUIER requisito expresado por el usuario (ej: color excluido o no pedido, marca no deseada, potencia insuficiente para su objetivo, o anomalías/averías no solicitadas en la descripción).
 7. "rejectionReason": Si userCriteriaMatch es false, explica en 1 frase concisa por qué se rechaza (ej: "El coche es de color negro en la foto y el usuario pidió exclusivamente blanco, azul, gris o rojo", o "La descripción indica avería de culata/para piezas"). Si cumple, déjalo en null.
-8. "criteriaNotes": 1 frase explicando cómo encaja con lo que busca el usuario.
+8. "criteriaNotes": 1 frase explicando cómo encaja con lo que busca el usuario (menciona exterior e interior si son visibles).
 9. "flipOpportunity":
    - "flipPotential": "Alto" | "Medio" | "Bajo" | null
-   - "damageSummary": Daños visibles en chapa/ópticas ("Sin daños aparentes" o descripción)
-   - "estimatedRepairCost": Estimación orientativa de arreglo (ej: "0€", "100-200€ pintura")
+   - "damageSummary": Daños visibles en chapa/ópticas/interior ("Sin daños aparentes" o descripción)
+   - "estimatedRepairCost": Estimación orientativa de arreglo (ej: "0€", "100-200€ pintura/tapicería")
 
 Responde ÚNICAMENTE un JSON válido con este formato:
 {
@@ -98,7 +117,7 @@ Responde ÚNICAMENTE un JSON válido con este formato:
   "bodyType": "utilitario/compacto",
   "doors": 3,
   "verified3p": true,
-  "bodyCondition": "Pintura con brillo, sin golpes visibles",
+  "bodyCondition": "Pintura con brillo, volante y tapicería en buen estado",
   "userCriteriaMatch": true,
   "rejectionReason": null,
   "criteriaNotes": "Cumple los criterios solicitados por el usuario",
@@ -115,15 +134,18 @@ Responde ÚNICAMENTE un JSON válido con este formato:
     if (isCommandCodeConfigured()) {
       try {
         const visionModel = getCommandCodeModel(VISION_MODEL);
+        const contentParts: Array<{ type: "text"; text: string } | { type: "file"; data: Buffer; mediaType: string }> = [
+          { type: "text", text: prompt },
+        ];
+        for (const item of validBuffers) {
+          contentParts.push({ type: "file", data: item.buffer, mediaType: item.contentType });
+        }
         const result = await generateText({
           model: visionModel,
           messages: [
             {
               role: "user",
-              content: [
-                { type: "text", text: prompt },
-                { type: "file", data: buffer, mediaType: contentType },
-              ],
+              content: contentParts,
             },
           ],
           abortSignal: AbortSignal.timeout(35000),
@@ -227,42 +249,40 @@ export async function auditCarVisuals(
 
     if (candidateUrls.length === 0) return car;
 
-    // 2. Try candidate images until we get a successful visual audit
-    // Avoid video streams or video files
-    let visualAudit: VisualAudit | null = null;
-    let successfulImgUrl: string | null = null;
+    // 2. Select sampled pair of images: Photo 1 (exterior) + Mid-gallery (interior/detail)
+    const validPhotoUrls = candidateUrls.filter((u) => {
+      const lower = u.toLowerCase();
+      return (
+        !lower.endsWith(".mp4") &&
+        !lower.includes(".mp4?") &&
+        !lower.endsWith(".webm") &&
+        !lower.endsWith(".mov") &&
+        !lower.endsWith(".m3u8") &&
+        !lower.includes("video-thumb-play") &&
+        !lower.includes("play-button")
+      );
+    });
 
-    for (const url of candidateUrls.slice(0, 3)) {
-      const lower = url.toLowerCase();
-      if (
-        lower.endsWith(".mp4") ||
-        lower.includes(".mp4?") ||
-        lower.endsWith(".webm") ||
-        lower.endsWith(".mov") ||
-        lower.endsWith(".m3u8") ||
-        lower.includes("video-thumb-play") ||
-        lower.includes("play-button")
-      ) {
-        continue;
-      }
+    if (validPhotoUrls.length === 0) return car;
 
-      visualAudit = await auditSingleCarImage(url, car.title, {
-        ...opts,
-        price: car.price,
-        description: car.description,
-      });
-
-      if (visualAudit) {
-        successfulImgUrl = url;
-        break;
-      }
+    const sampledPair: string[] = [validPhotoUrls[0]];
+    if (validPhotoUrls.length >= 3) {
+      sampledPair.push(validPhotoUrls[Math.floor(validPhotoUrls.length / 2)]);
+    } else if (validPhotoUrls.length === 2) {
+      sampledPair.push(validPhotoUrls[1]);
     }
+
+    const visualAudit = await auditSingleCarImage(sampledPair, car.title, {
+      ...opts,
+      price: car.price,
+      description: car.description,
+    });
 
     if (!visualAudit) return car;
 
     const enrichedCar = {
       ...car,
-      image_url: successfulImgUrl || car.image_url,
+      image_url: validPhotoUrls[0] || car.image_url,
       visualAudit,
     };
     const pros = [...(enrichedCar.pros || [])];

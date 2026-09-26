@@ -437,26 +437,44 @@ export default function CarResultCard({
         </div>
 
         {/* Action Buttons */}
-        <div className="pt-3 border-t border-mist flex items-center gap-2">
-          <a
-            href={href}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="btn-primary flex-1 py-2 px-3 text-xs font-medium text-center flex items-center justify-center gap-1.5 group/btn"
-          >
-            <span>Ver anuncio en {car.source}</span>
-            <span className="group-hover/btn:translate-x-0.5 group-hover/btn:-translate-y-0.5 transition-transform">↗</span>
-          </a>
+        <div className="pt-3 border-t border-mist flex flex-col gap-2">
+          <div className="flex items-center gap-2">
+            <a
+              href={href}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="btn-primary flex-1 py-2 px-3 text-xs font-medium text-center flex items-center justify-center gap-1.5 group/btn"
+            >
+              <span>Ver anuncio en {car.source}</span>
+              <span className="group-hover/btn:translate-x-0.5 group-hover/btn:-translate-y-0.5 transition-transform">↗</span>
+            </a>
+
+            {onAskCopilot && (
+              <button
+                onClick={handleAsk}
+                title="Preguntar a AutoMisho sobre este coche"
+                className="btn-secondary p-2 rounded-lg text-xs shrink-0 flex items-center justify-center"
+              >
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+                </svg>
+              </button>
+            )}
+          </div>
 
           {onAskCopilot && (
             <button
-              onClick={handleAsk}
-              title="Preguntar a AutoMisho sobre este coche"
-              className="btn-secondary p-2 rounded-lg text-xs shrink-0 flex items-center justify-center"
+              type="button"
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                onAskCopilot(`Inspecciona a fondo todas las fotos y detalles del ${car.title} por ${priceLabel} de ${car.source}. Hazme una auditoría visual forense completa de chapa, desgaste interior y vano motor.`);
+              }}
+              title="Auditar todas las fotos del anuncio en detalle"
+              className="w-full py-1.5 px-3 rounded-lg border border-mist bg-linen/60 hover:bg-paper hover:border-signal-blue text-[11px] font-medium text-graphite hover:text-signal-blue transition-all flex items-center justify-center gap-1.5 shadow-xs cursor-pointer group/inspect"
             >
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
-              </svg>
+              <span className="group-hover/inspect:scale-110 transition-transform">🔍</span>
+              <span>Inspeccionar a fondo todas las fotos</span>
             </button>
           )}
         </div>
